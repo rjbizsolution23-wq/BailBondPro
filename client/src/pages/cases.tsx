@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/layout/header";
+import { AddCaseModal } from "@/components/modals/add-case-modal";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 
 export default function Cases() {
+  const [showAddModal, setShowAddModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   
@@ -103,7 +105,7 @@ export default function Cases() {
             <h3 className="text-xl font-semibold text-foreground">Case Management</h3>
             <p className="text-muted-foreground">Track court cases and legal proceedings</p>
           </div>
-          <Button data-testid="button-add-case">
+          <Button onClick={() => setShowAddModal(true)} data-testid="button-add-case">
             <i className="fas fa-plus mr-2"></i>Add New Case
           </Button>
         </div>
@@ -335,6 +337,11 @@ export default function Cases() {
           )}
         </Card>
       </div>
+
+      <AddCaseModal
+        open={showAddModal}
+        onOpenChange={setShowAddModal}
+      />
     </div>
   );
 }

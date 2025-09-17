@@ -80,6 +80,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Validation error", details: error.errors });
       }
+      
+      // Handle PostgreSQL constraint violations
+      if (error instanceof Error) {
+        if (error.message.includes("duplicate key value violates unique constraint")) {
+          if (error.message.includes("clients_email_unique")) {
+            return res.status(400).json({ error: "Email address already exists. Please use a different email." });
+          }
+          return res.status(400).json({ error: "Duplicate value detected. Please check your input." });
+        }
+      }
+      
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create client" });
     }
   });
@@ -137,6 +148,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Validation error", details: error.errors });
       }
+      
+      // Handle PostgreSQL constraint violations
+      if (error instanceof Error) {
+        if (error.message.includes("duplicate key value violates unique constraint")) {
+          if (error.message.includes("cases_case_number_unique")) {
+            return res.status(400).json({ error: "Case number already exists. Please use a different case number." });
+          }
+          return res.status(400).json({ error: "Duplicate value detected. Please check your input." });
+        }
+      }
+      
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create case" });
     }
   });
@@ -203,6 +225,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Validation error", details: error.errors });
       }
+      
+      // Handle PostgreSQL constraint violations
+      if (error instanceof Error) {
+        if (error.message.includes("duplicate key value violates unique constraint")) {
+          if (error.message.includes("bonds_bond_number_unique")) {
+            return res.status(400).json({ error: "Bond number already exists. Please use a different bond number." });
+          }
+          return res.status(400).json({ error: "Duplicate value detected. Please check your input." });
+        }
+      }
+      
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create bond" });
     }
   });

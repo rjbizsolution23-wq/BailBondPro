@@ -135,12 +135,19 @@ export const insertBondSchema = createInsertSchema(bonds).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  bondAmount: z.union([z.string(), z.number()]).transform(val => String(val)),
+  premiumAmount: z.union([z.string(), z.number()]).transform(val => String(val)),
+  premiumRate: z.union([z.string(), z.number()]).transform(val => String(val)),
+  collateralAmount: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional(),
 });
 
 export const insertPaymentSchema = createInsertSchema(payments).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  amount: z.union([z.string(), z.number()]).transform(val => String(val)),
 });
 
 export const insertDocumentSchema = createInsertSchema(documents).omit({

@@ -39,8 +39,8 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  // Using in-memory storage - no database initialization needed
-  log("Using in-memory storage for data persistence");
+  // Using PostgreSQL database storage
+  log("Using PostgreSQL database for data persistence");
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
