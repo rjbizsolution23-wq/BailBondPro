@@ -5,9 +5,11 @@ import {
   type Bond, type InsertBond,
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
-  type Activity, type InsertActivity
+  type Activity, type InsertActivity,
+  users, clients, cases, bonds, payments, documents, activities
 } from "@shared/schema";
-import { gibsonApi } from "./services/gibsonApi";
+import { db } from "./db";
+import { eq, desc, like, and, or, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -66,672 +68,444 @@ export interface IStorage {
   getFinancialSummary(): Promise<any>;
 }
 
-export class GibsonApiStorage implements IStorage {
+
+// Database storage implementation
+export class DatabaseStorage implements IStorage {
   // Users
   async getUser(id: string): Promise<User | undefined> {
-    const result = await gibsonApi.read("users", `id = '${id}'`);
-    return result.data?.[0];
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const result = await gibsonApi.read("users", `username = '${username}'`);
-    return result.data?.[0];
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
   }
 
   async createUser(user: InsertUser): Promise<User> {
-    const userData = { ...user, id: randomUUID() };
-    const result = await gibsonApi.create("users", userData);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async updateUser(id: string, user: Partial<User>): Promise<User> {
-    const result = await gibsonApi.update("users", id, user);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async deleteUser(id: string): Promise<boolean> {
-    const result = await gibsonApi.delete("users", id);
-    if (result.error) throw new Error(result.error);
-    return result.data || false;
-  }
-
-  // Clients
-  async getClient(id: string): Promise<Client | undefined> {
-    const result = await gibsonApi.read("clients", `id = '${id}'`);
-    return result.data?.[0];
-  }
-
-  async getClients(filter?: { status?: string; search?: string }): Promise<Client[]> {
-    let where = "";
-    if (filter?.status) where += `status = '${filter.status}'`;
-    if (filter?.search) {
-      if (where) where += " AND ";
-      where += `(first_name ILIKE '%${filter.search}%' OR last_name ILIKE '%${filter.search}%' OR phone ILIKE '%${filter.search}%' OR email ILIKE '%${filter.search}%')`;
-    }
-
-    const result = await gibsonApi.read("clients", where, "created_at DESC");
-    return result.data || [];
-  }
-
-  async getClientsWithBonds(): Promise<any[]> {
-    const result = await gibsonApi.getClientsWithBonds();
-    return result.data || [];
-  }
-
-  async createClient(client: InsertClient): Promise<Client> {
-    const clientData = { ...client, id: randomUUID() };
-    const result = await gibsonApi.create("clients", clientData);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async updateClient(id: string, client: Partial<Client>): Promise<Client> {
-    const result = await gibsonApi.update("clients", id, client);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async deleteClient(id: string): Promise<boolean> {
-    const result = await gibsonApi.delete("clients", id);
-    if (result.error) throw new Error(result.error);
-    return result.data || false;
-  }
-
-  // Cases
-  async getCase(id: string): Promise<Case | undefined> {
-    const result = await gibsonApi.read("cases", `id = '${id}'`);
-    return result.data?.[0];
-  }
-
-  async getCases(filter?: { clientId?: string; status?: string }): Promise<Case[]> {
-    let where = "";
-    if (filter?.clientId) where += `client_id = '${filter.clientId}'`;
-    if (filter?.status) {
-      if (where) where += " AND ";
-      where += `status = '${filter.status}'`;
-    }
-
-    const result = await gibsonApi.read("cases", where, "created_at DESC");
-    return result.data || [];
-  }
-
-  async createCase(case_: InsertCase): Promise<Case> {
-    const caseData = { ...case_, id: randomUUID() };
-    const result = await gibsonApi.create("cases", caseData);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async updateCase(id: string, case_: Partial<Case>): Promise<Case> {
-    const result = await gibsonApi.update("cases", id, case_);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async deleteCase(id: string): Promise<boolean> {
-    const result = await gibsonApi.delete("cases", id);
-    if (result.error) throw new Error(result.error);
-    return result.data || false;
-  }
-
-  // Bonds
-  async getBond(id: string): Promise<Bond | undefined> {
-    const result = await gibsonApi.read("bonds", `id = '${id}'`);
-    return result.data?.[0];
-  }
-
-  async getBonds(filter?: { clientId?: string; status?: string }): Promise<Bond[]> {
-    let where = "";
-    if (filter?.clientId) where += `client_id = '${filter.clientId}'`;
-    if (filter?.status) {
-      if (where) where += " AND ";
-      where += `status = '${filter.status}'`;
-    }
-
-    const result = await gibsonApi.read("bonds", where, "created_at DESC");
-    return result.data || [];
-  }
-
-  async getBondsWithDetails(): Promise<any[]> {
-    const result = await gibsonApi.getBondsWithDetails();
-    return result.data || [];
-  }
-
-  async createBond(bond: InsertBond): Promise<Bond> {
-    const bondData = { ...bond, id: randomUUID() };
-    const result = await gibsonApi.create("bonds", bondData);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async updateBond(id: string, bond: Partial<Bond>): Promise<Bond> {
-    const result = await gibsonApi.update("bonds", id, bond);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async deleteBond(id: string): Promise<boolean> {
-    const result = await gibsonApi.delete("bonds", id);
-    if (result.error) throw new Error(result.error);
-    return result.data || false;
-  }
-
-  // Payments
-  async getPayment(id: string): Promise<Payment | undefined> {
-    const result = await gibsonApi.read("payments", `id = '${id}'`);
-    return result.data?.[0];
-  }
-
-  async getPayments(filter?: { bondId?: string; clientId?: string }): Promise<Payment[]> {
-    let where = "";
-    if (filter?.bondId) where += `bond_id = '${filter.bondId}'`;
-    if (filter?.clientId) {
-      if (where) where += " AND ";
-      where += `client_id = '${filter.clientId}'`;
-    }
-
-    const result = await gibsonApi.read("payments", where, "created_at DESC");
-    return result.data || [];
-  }
-
-  async createPayment(payment: InsertPayment): Promise<Payment> {
-    const paymentData = { ...payment, id: randomUUID() };
-    const result = await gibsonApi.create("payments", paymentData);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async updatePayment(id: string, payment: Partial<Payment>): Promise<Payment> {
-    const result = await gibsonApi.update("payments", id, payment);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async deletePayment(id: string): Promise<boolean> {
-    const result = await gibsonApi.delete("payments", id);
-    if (result.error) throw new Error(result.error);
-    return result.data || false;
-  }
-
-  // Documents
-  async getDocument(id: string): Promise<Document | undefined> {
-    const result = await gibsonApi.read("documents", `id = '${id}'`);
-    return result.data?.[0];
-  }
-
-  async getDocuments(filter?: { category?: string; relatedId?: string }): Promise<Document[]> {
-    let where = "";
-    if (filter?.category) where += `category = '${filter.category}'`;
-    if (filter?.relatedId) {
-      if (where) where += " AND ";
-      where += `related_id = '${filter.relatedId}'`;
-    }
-
-    const result = await gibsonApi.read("documents", where, "created_at DESC");
-    return result.data || [];
-  }
-
-  async createDocument(document: InsertDocument): Promise<Document> {
-    const documentData = { ...document, id: randomUUID() };
-    const result = await gibsonApi.create("documents", documentData);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async updateDocument(id: string, document: Partial<Document>): Promise<Document> {
-    const result = await gibsonApi.update("documents", id, document);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async deleteDocument(id: string): Promise<boolean> {
-    const result = await gibsonApi.delete("documents", id);
-    if (result.error) throw new Error(result.error);
-    return result.data || false;
-  }
-
-  // Activities
-  async getActivities(limit: number = 50): Promise<Activity[]> {
-    const result = await gibsonApi.read("activities", undefined, "created_at DESC", limit);
-    return result.data || [];
-  }
-
-  async createActivity(activity: InsertActivity): Promise<Activity> {
-    const activityData = { ...activity, id: randomUUID() };
-    const result = await gibsonApi.create("activities", activityData);
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  // Dashboard & Analytics
-  async getDashboardStats(): Promise<any> {
-    const result = await gibsonApi.getDashboardStats();
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-
-  async getRecentActivity(limit: number = 10): Promise<any[]> {
-    const result = await gibsonApi.getRecentActivity(limit);
-    return result.data || [];
-  }
-
-  async getUpcomingCourtDates(limit: number = 10): Promise<any[]> {
-    const result = await gibsonApi.getUpcomingCourtDates(limit);
-    return result.data || [];
-  }
-
-  async getFinancialSummary(): Promise<any> {
-    const result = await gibsonApi.getFinancialSummary();
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  }
-}
-
-// In-memory storage implementation
-export class MemStorage implements IStorage {
-  private users: Map<string, User> = new Map();
-  private clients: Map<string, Client> = new Map();
-  private cases: Map<string, Case> = new Map();
-  private bonds: Map<string, Bond> = new Map();
-  private payments: Map<string, Payment> = new Map();
-  private documents: Map<string, Document> = new Map();
-  private activities: Map<string, Activity> = new Map();
-
-  constructor() {
-    // Initialize with sample data
-    this.initializeSampleData();
-  }
-
-  private initializeSampleData() {
-    // Sample user
-    const sampleUser: User = {
-      id: "user-1",
-      username: "john.smith", 
-      email: "john.smith@bailbondpro.com",
-      password: "hashed_password",
-      firstName: "John",
-      lastName: "Smith",
-      role: "agent",
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.users.set(sampleUser.id, sampleUser);
-
-    // Sample clients
-    const sampleClients: Client[] = [
-      {
-        id: "client-1",
-        firstName: "Michael",
-        lastName: "Johnson",
-        dateOfBirth: "1990-05-15",
-        phone: "555-0101",
-        email: "michael.johnson@email.com",
-        address: "456 Oak Avenue",
-        city: "Springfield",
-        state: "IL",
-        zipCode: "62701",
-        emergencyContact: "Mary Johnson",
-        emergencyPhone: "555-0102",
-        status: "active",
-        notes: "Reliable client",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      {
-        id: "client-2", 
-        firstName: "Jessica",
-        lastName: "Williams",
-        dateOfBirth: "1985-08-22",
-        phone: "555-0201",
-        email: "jessica.williams@email.com",
-        address: "789 Pine Street",
-        city: "Springfield",
-        state: "IL", 
-        zipCode: "62702",
-        status: "active",
-        notes: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ];
-    
-    sampleClients.forEach(client => this.clients.set(client.id, client));
-  }
-
-  // Users
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(user => user.username === username);
-  }
-
-  async createUser(user: InsertUser): Promise<User> {
-    const newUser: User = {
-      ...user,
-      id: randomUUID(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.users.set(newUser.id, newUser);
+    const [newUser] = await db.insert(users).values(user).returning();
     return newUser;
   }
 
   async updateUser(id: string, user: Partial<User>): Promise<User> {
-    const existing = this.users.get(id);
-    if (!existing) throw new Error("User not found");
-    
-    const updated: User = { ...existing, ...user, updatedAt: new Date() };
-    this.users.set(id, updated);
+    const [updated] = await db.update(users).set(user).where(eq(users.id, id)).returning();
+    if (!updated) throw new Error("User not found");
     return updated;
   }
 
   async deleteUser(id: string): Promise<boolean> {
-    return this.users.delete(id);
+    const result = await db.delete(users).where(eq(users.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Clients
   async getClient(id: string): Promise<Client | undefined> {
-    return this.clients.get(id);
+    const [client] = await db.select().from(clients).where(eq(clients.id, id));
+    return client || undefined;
   }
 
   async getClients(filter?: { status?: string; search?: string }): Promise<Client[]> {
-    let clients = Array.from(this.clients.values());
-    
+    const conditions = [];
     if (filter?.status) {
-      clients = clients.filter(client => client.status === filter.status);
+      conditions.push(eq(clients.status, filter.status));
     }
     
     if (filter?.search) {
-      const search = filter.search.toLowerCase();
-      clients = clients.filter(client => 
-        client.firstName.toLowerCase().includes(search) ||
-        client.lastName.toLowerCase().includes(search) ||
-        client.phone.includes(search) ||
-        client.email?.toLowerCase().includes(search)
+      const searchTerm = `%${filter.search}%`;
+      conditions.push(
+        or(
+          like(clients.firstName, searchTerm),
+          like(clients.lastName, searchTerm),
+          like(clients.phone, searchTerm),
+          like(clients.email, searchTerm)
+        )
       );
     }
     
-    return clients.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (conditions.length > 0) {
+      return db.select().from(clients).where(and(...conditions)).orderBy(desc(clients.createdAt));
+    }
+    
+    return db.select().from(clients).orderBy(desc(clients.createdAt));
   }
 
   async getClientsWithBonds(): Promise<any[]> {
-    const clients = Array.from(this.clients.values());
-    return clients.map(client => ({
-      ...client,
-      total_bonds: Array.from(this.bonds.values()).filter(bond => bond.clientId === client.id).length,
-      last_bond_date: null // Simplified for now
+    const result = await db
+      .select({
+        id: clients.id,
+        firstName: clients.firstName,
+        lastName: clients.lastName,
+        dateOfBirth: clients.dateOfBirth,
+        phone: clients.phone,
+        email: clients.email,
+        address: clients.address,
+        city: clients.city,
+        state: clients.state,
+        zipCode: clients.zipCode,
+        emergencyContact: clients.emergencyContact,
+        emergencyPhone: clients.emergencyPhone,
+        status: clients.status,
+        notes: clients.notes,
+        createdAt: clients.createdAt,
+        updatedAt: clients.updatedAt,
+        totalBonds: sql<number>`count(${bonds.id})`
+      })
+      .from(clients)
+      .leftJoin(bonds, eq(clients.id, bonds.clientId))
+      .groupBy(clients.id)
+      .orderBy(desc(clients.createdAt));
+    
+    return result.map(row => ({
+      ...row,
+      total_bonds: row.totalBonds,
+      last_bond_date: null // Will enhance later
     }));
   }
 
   async createClient(client: InsertClient): Promise<Client> {
-    const newClient: Client = {
-      ...client,
-      id: randomUUID(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.clients.set(newClient.id, newClient);
+    const [newClient] = await db.insert(clients).values(client).returning();
     return newClient;
   }
 
   async updateClient(id: string, client: Partial<Client>): Promise<Client> {
-    const existing = this.clients.get(id);
-    if (!existing) throw new Error("Client not found");
-    
-    const updated: Client = { ...existing, ...client, updatedAt: new Date() };
-    this.clients.set(id, updated);
+    const [updated] = await db.update(clients).set(client).where(eq(clients.id, id)).returning();
+    if (!updated) throw new Error("Client not found");
     return updated;
   }
 
   async deleteClient(id: string): Promise<boolean> {
-    return this.clients.delete(id);
+    const result = await db.delete(clients).where(eq(clients.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Cases
   async getCase(id: string): Promise<Case | undefined> {
-    return this.cases.get(id);
+    const [case_] = await db.select().from(cases).where(eq(cases.id, id));
+    return case_ || undefined;
   }
 
   async getCases(filter?: { clientId?: string; status?: string }): Promise<Case[]> {
-    let cases = Array.from(this.cases.values());
-    
+    const conditions = [];
     if (filter?.clientId) {
-      cases = cases.filter(case_ => case_.clientId === filter.clientId);
+      conditions.push(eq(cases.clientId, filter.clientId));
     }
-    
     if (filter?.status) {
-      cases = cases.filter(case_ => case_.status === filter.status);
+      conditions.push(eq(cases.status, filter.status));
     }
     
-    return cases.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (conditions.length > 0) {
+      return db.select().from(cases).where(and(...conditions)).orderBy(desc(cases.createdAt));
+    }
+    
+    return db.select().from(cases).orderBy(desc(cases.createdAt));
   }
 
   async createCase(case_: InsertCase): Promise<Case> {
-    const newCase: Case = {
-      ...case_,
-      id: randomUUID(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.cases.set(newCase.id, newCase);
+    const [newCase] = await db.insert(cases).values(case_).returning();
     return newCase;
   }
 
   async updateCase(id: string, case_: Partial<Case>): Promise<Case> {
-    const existing = this.cases.get(id);
-    if (!existing) throw new Error("Case not found");
-    
-    const updated: Case = { ...existing, ...case_, updatedAt: new Date() };
-    this.cases.set(id, updated);
+    const [updated] = await db.update(cases).set(case_).where(eq(cases.id, id)).returning();
+    if (!updated) throw new Error("Case not found");
     return updated;
   }
 
   async deleteCase(id: string): Promise<boolean> {
-    return this.cases.delete(id);
+    const result = await db.delete(cases).where(eq(cases.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
-  // Bonds  
+  // Bonds
   async getBond(id: string): Promise<Bond | undefined> {
-    return this.bonds.get(id);
+    const [bond] = await db.select().from(bonds).where(eq(bonds.id, id));
+    return bond || undefined;
   }
 
   async getBonds(filter?: { clientId?: string; status?: string }): Promise<Bond[]> {
-    let bonds = Array.from(this.bonds.values());
-    
+    const conditions = [];
     if (filter?.clientId) {
-      bonds = bonds.filter(bond => bond.clientId === filter.clientId);
+      conditions.push(eq(bonds.clientId, filter.clientId));
     }
-    
     if (filter?.status) {
-      bonds = bonds.filter(bond => bond.status === filter.status);
+      conditions.push(eq(bonds.status, filter.status));
     }
     
-    return bonds.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (conditions.length > 0) {
+      return db.select().from(bonds).where(and(...conditions)).orderBy(desc(bonds.createdAt));
+    }
+    
+    return db.select().from(bonds).orderBy(desc(bonds.createdAt));
   }
 
   async getBondsWithDetails(): Promise<any[]> {
-    const bonds = Array.from(this.bonds.values());
-    return bonds.map(bond => {
-      const client = this.clients.get(bond.clientId);
-      const case_ = this.cases.get(bond.caseId);
-      const agent = this.users.get(bond.agentId);
-      
-      return {
-        ...bond,
-        client_name: client ? `${client.firstName} ${client.lastName}` : "Unknown",
-        client_phone: client?.phone || "",
-        court_date: case_?.courtDate || null,
-        agent_name: agent ? `${agent.firstName} ${agent.lastName}` : "Unknown"
-      };
-    });
+    const result = await db
+      .select({
+        id: bonds.id,
+        bondNumber: bonds.bondNumber,
+        clientId: bonds.clientId,
+        caseId: bonds.caseId,
+        bondAmount: bonds.bondAmount,
+        premiumAmount: bonds.premiumAmount,
+        premiumRate: bonds.premiumRate,
+        collateralAmount: bonds.collateralAmount,
+        collateralDescription: bonds.collateralDescription,
+        status: bonds.status,
+        issueDate: bonds.issueDate,
+        exonerationDate: bonds.exonerationDate,
+        paymentStatus: bonds.paymentStatus,
+        agentId: bonds.agentId,
+        notes: bonds.notes,
+        createdAt: bonds.createdAt,
+        updatedAt: bonds.updatedAt,
+        clientName: sql<string>`CONCAT(${clients.firstName}, ' ', ${clients.lastName})`,
+        clientPhone: clients.phone,
+        courtDate: cases.courtDate,
+        agentName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`
+      })
+      .from(bonds)
+      .leftJoin(clients, eq(bonds.clientId, clients.id))
+      .leftJoin(cases, eq(bonds.caseId, cases.id))
+      .leftJoin(users, eq(bonds.agentId, users.id))
+      .orderBy(desc(bonds.createdAt));
+    
+    return result.map(row => ({
+      ...row,
+      client_name: row.clientName || "Unknown",
+      client_phone: row.clientPhone || "",
+      court_date: row.courtDate,
+      agent_name: row.agentName || "Unknown"
+    }));
   }
 
   async createBond(bond: InsertBond): Promise<Bond> {
-    const newBond: Bond = {
-      ...bond,
-      id: randomUUID(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.bonds.set(newBond.id, newBond);
+    const [newBond] = await db.insert(bonds).values(bond).returning();
     return newBond;
   }
 
   async updateBond(id: string, bond: Partial<Bond>): Promise<Bond> {
-    const existing = this.bonds.get(id);
-    if (!existing) throw new Error("Bond not found");
-    
-    const updated: Bond = { ...existing, ...bond, updatedAt: new Date() };
-    this.bonds.set(id, updated);
+    const [updated] = await db.update(bonds).set(bond).where(eq(bonds.id, id)).returning();
+    if (!updated) throw new Error("Bond not found");
     return updated;
   }
 
   async deleteBond(id: string): Promise<boolean> {
-    return this.bonds.delete(id);
+    const result = await db.delete(bonds).where(eq(bonds.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Payments
   async getPayment(id: string): Promise<Payment | undefined> {
-    return this.payments.get(id);
+    const [payment] = await db.select().from(payments).where(eq(payments.id, id));
+    return payment || undefined;
   }
 
   async getPayments(filter?: { bondId?: string; clientId?: string }): Promise<Payment[]> {
-    let payments = Array.from(this.payments.values());
-    
+    const conditions = [];
     if (filter?.bondId) {
-      payments = payments.filter(payment => payment.bondId === filter.bondId);
+      conditions.push(eq(payments.bondId, filter.bondId));
     }
-    
     if (filter?.clientId) {
-      payments = payments.filter(payment => payment.clientId === filter.clientId);
+      conditions.push(eq(payments.clientId, filter.clientId));
     }
     
-    return payments.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (conditions.length > 0) {
+      return db.select().from(payments).where(and(...conditions)).orderBy(desc(payments.createdAt));
+    }
+    
+    return db.select().from(payments).orderBy(desc(payments.createdAt));
   }
 
   async createPayment(payment: InsertPayment): Promise<Payment> {
-    const newPayment: Payment = {
-      ...payment,
-      id: randomUUID(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.payments.set(newPayment.id, newPayment);
+    const [newPayment] = await db.insert(payments).values(payment).returning();
     return newPayment;
   }
 
   async updatePayment(id: string, payment: Partial<Payment>): Promise<Payment> {
-    const existing = this.payments.get(id);
-    if (!existing) throw new Error("Payment not found");
-    
-    const updated: Payment = { ...existing, ...payment, updatedAt: new Date() };
-    this.payments.set(id, updated);
+    const [updated] = await db.update(payments).set(payment).where(eq(payments.id, id)).returning();
+    if (!updated) throw new Error("Payment not found");
     return updated;
   }
 
   async deletePayment(id: string): Promise<boolean> {
-    return this.payments.delete(id);
+    const result = await db.delete(payments).where(eq(payments.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Documents
   async getDocument(id: string): Promise<Document | undefined> {
-    return this.documents.get(id);
+    const [document] = await db.select().from(documents).where(eq(documents.id, id));
+    return document || undefined;
   }
 
   async getDocuments(filter?: { category?: string; relatedId?: string }): Promise<Document[]> {
-    let documents = Array.from(this.documents.values());
-    
+    const conditions = [];
     if (filter?.category) {
-      documents = documents.filter(doc => doc.category === filter.category);
+      conditions.push(eq(documents.category, filter.category));
     }
-    
     if (filter?.relatedId) {
-      documents = documents.filter(doc => doc.relatedId === filter.relatedId);
+      conditions.push(eq(documents.relatedId, filter.relatedId));
     }
     
-    return documents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (conditions.length > 0) {
+      return db.select().from(documents).where(and(...conditions)).orderBy(desc(documents.createdAt));
+    }
+    
+    return db.select().from(documents).orderBy(desc(documents.createdAt));
   }
 
   async createDocument(document: InsertDocument): Promise<Document> {
-    const newDocument: Document = {
-      ...document,
-      id: randomUUID(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.documents.set(newDocument.id, newDocument);
+    const [newDocument] = await db.insert(documents).values(document).returning();
     return newDocument;
   }
 
   async updateDocument(id: string, document: Partial<Document>): Promise<Document> {
-    const existing = this.documents.get(id);
-    if (!existing) throw new Error("Document not found");
-    
-    const updated: Document = { ...existing, ...document, updatedAt: new Date() };
-    this.documents.set(id, updated);
+    const [updated] = await db.update(documents).set(document).where(eq(documents.id, id)).returning();
+    if (!updated) throw new Error("Document not found");
     return updated;
   }
 
   async deleteDocument(id: string): Promise<boolean> {
-    return this.documents.delete(id);
+    const result = await db.delete(documents).where(eq(documents.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Activities
   async getActivities(limit: number = 50): Promise<Activity[]> {
-    const activities = Array.from(this.activities.values());
-    return activities
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, limit);
+    return db.select().from(activities).orderBy(desc(activities.createdAt)).limit(limit);
   }
 
   async createActivity(activity: InsertActivity): Promise<Activity> {
-    const newActivity: Activity = {
-      ...activity,
-      id: randomUUID(),
-      createdAt: new Date(),
-    };
-    this.activities.set(newActivity.id, newActivity);
+    const [newActivity] = await db.insert(activities).values(activity).returning();
     return newActivity;
   }
 
   // Dashboard & Analytics
   async getDashboardStats(): Promise<any> {
-    const activeBonds = Array.from(this.bonds.values()).filter(bond => bond.status === 'active').length;
-    const totalRevenue = Array.from(this.payments.values())
-      .filter(payment => payment.status === 'completed')
-      .reduce((sum, payment) => sum + parseFloat(payment.amount), 0);
-    const pendingPayments = Array.from(this.bonds.values())
-      .filter(bond => ['pending', 'partial'].includes(bond.paymentStatus))
-      .reduce((sum, bond) => sum + parseFloat(bond.premiumAmount), 0);
+    const [activeBondsResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(bonds)
+      .where(eq(bonds.status, 'active'));
+    
+    const [totalRevenueResult] = await db
+      .select({ total: sql<number>`coalesce(sum(${payments.amount}), 0)` })
+      .from(payments)
+      .where(eq(payments.status, 'completed'));
+    
+    const [pendingPaymentsResult] = await db
+      .select({ total: sql<number>`coalesce(sum(${bonds.premiumAmount}), 0)` })
+      .from(bonds)
+      .where(or(eq(bonds.paymentStatus, 'pending'), eq(bonds.paymentStatus, 'partial')));
+    
+    const [upcomingCourtDatesResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(cases)
+      .where(and(
+        eq(cases.status, 'open'),
+        sql`${cases.courtDate}::date >= current_date`
+      ));
     
     return {
-      activeBonds,
-      totalRevenue,
-      pendingPayments, 
-      upcomingCourtDates: 0, // Simplified
+      activeBonds: activeBondsResult?.count || 0,
+      totalRevenue: Number(totalRevenueResult?.total || 0),
+      pendingPayments: Number(pendingPaymentsResult?.total || 0),
+      upcomingCourtDates: upcomingCourtDatesResult?.count || 0
     };
   }
 
   async getRecentActivity(limit: number = 10): Promise<any[]> {
-    return []; // Simplified for now
+    const result = await db
+      .select({
+        id: activities.id,
+        userId: activities.userId,
+        action: activities.action,
+        resourceType: activities.resourceType,
+        resourceId: activities.resourceId,
+        details: activities.details,
+        createdAt: activities.createdAt,
+        userName: sql<string>`CONCAT(${users.firstName}, ' ', ${users.lastName})`
+      })
+      .from(activities)
+      .leftJoin(users, eq(activities.userId, users.id))
+      .orderBy(desc(activities.createdAt))
+      .limit(limit);
+    
+    return result.map(row => ({
+      ...row,
+      user_name: row.userName || "Unknown"
+    }));
   }
 
   async getUpcomingCourtDates(limit: number = 10): Promise<any[]> {
-    return []; // Simplified for now
+    const result = await db
+      .select({
+        id: cases.id,
+        caseNumber: cases.caseNumber,
+        clientId: cases.clientId,
+        charges: cases.charges,
+        arrestDate: cases.arrestDate,
+        courtDate: cases.courtDate,
+        courtLocation: cases.courtLocation,
+        judgeName: cases.judgeName,
+        prosecutorName: cases.prosecutorName,
+        defenseAttorney: cases.defenseAttorney,
+        status: cases.status,
+        notes: cases.notes,
+        createdAt: cases.createdAt,
+        updatedAt: cases.updatedAt,
+        clientName: sql<string>`CONCAT(${clients.firstName}, ' ', ${clients.lastName})`,
+        bondNumber: bonds.bondNumber
+      })
+      .from(cases)
+      .leftJoin(clients, eq(cases.clientId, clients.id))
+      .leftJoin(bonds, eq(cases.id, bonds.caseId))
+      .where(and(
+        eq(cases.status, 'open'),
+        sql`${cases.courtDate}::date >= current_date`
+      ))
+      .orderBy(sql`${cases.courtDate}::date`)
+      .limit(limit);
+    
+    return result.map(row => ({
+      ...row,
+      client_name: row.clientName || "Unknown",
+      bond_number: row.bondNumber
+    }));
   }
 
   async getFinancialSummary(): Promise<any> {
+    const [monthlyRevenueResult] = await db
+      .select({ total: sql<number>`coalesce(sum(${payments.amount}), 0)` })
+      .from(payments)
+      .where(and(
+        eq(payments.status, 'completed'),
+        sql`date_trunc('month', ${payments.createdAt}) = date_trunc('month', current_date)`
+      ));
+    
+    const [outstandingResult] = await db
+      .select({ total: sql<number>`coalesce(sum(${bonds.premiumAmount}), 0)` })
+      .from(bonds)
+      .where(eq(bonds.paymentStatus, 'pending'));
+    
+    const [totalPaymentsResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(payments);
+    
+    const [completedPaymentsResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(payments)
+      .where(eq(payments.status, 'completed'));
+    
+    const collectionRate = totalPaymentsResult?.count > 0 
+      ? (Number(completedPaymentsResult?.count || 0) / Number(totalPaymentsResult?.count || 1) * 100)
+      : 0;
+    
     return {
-      monthlyRevenue: 0,
-      outstanding: 0,
-      collectionRate: 0,
+      monthlyRevenue: Number(monthlyRevenueResult?.total || 0),
+      outstanding: Number(outstandingResult?.total || 0),
+      collectionRate: Math.round(collectionRate * 10) / 10
     };
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

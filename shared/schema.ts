@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, decimal, integer, boolean, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -175,3 +175,41 @@ export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 
 export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = z.infer<typeof insertActivitySchema>;
+
+// Relations
+export const usersRelations = relations(users, ({ many }) => ({
+  bonds: many(bonds),
+  documents: many(documents),
+  activities: many(activities),
+}));
+
+export const clientsRelations = relations(clients, ({ many }) => ({
+  cases: many(cases),
+  bonds: many(bonds),
+  payments: many(payments),
+}));
+
+export const casesRelations = relations(cases, ({ one, many }) => ({
+  client: one(clients, { fields: [cases.clientId], references: [clients.id] }),
+  bonds: many(bonds),
+}));
+
+export const bondsRelations = relations(bonds, ({ one, many }) => ({
+  client: one(clients, { fields: [bonds.clientId], references: [clients.id] }),
+  case: one(cases, { fields: [bonds.caseId], references: [cases.id] }),
+  agent: one(users, { fields: [bonds.agentId], references: [users.id] }),
+  payments: many(payments),
+}));
+
+export const paymentsRelations = relations(payments, ({ one }) => ({
+  bond: one(bonds, { fields: [payments.bondId], references: [bonds.id] }),
+  client: one(clients, { fields: [payments.clientId], references: [clients.id] }),
+}));
+
+export const documentsRelations = relations(documents, ({ one }) => ({
+  uploadedByUser: one(users, { fields: [documents.uploadedBy], references: [users.id] }),
+}));
+
+export const activitiesRelations = relations(activities, ({ one }) => ({
+  user: one(users, { fields: [activities.userId], references: [users.id] }),
+}));
