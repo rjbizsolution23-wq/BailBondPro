@@ -40,7 +40,7 @@ const bondSchema = z.object({
   collateralAmount: z.string().optional(),
   collateralDescription: z.string().optional(),
   issueDate: z.string().min(1, "Issue date is required"),
-  agentId: z.string().default("current-user-id"), // Would come from auth context
+  agentId: z.string().nullable().optional(), // Nullable until auth is implemented
   notes: z.string().optional(),
 }).refine(data => {
   const bondAmount = parseFloat(data.bondAmount);
@@ -70,7 +70,7 @@ export function AddBondModal({ open, onOpenChange }: AddBondModalProps) {
       collateralAmount: "",
       collateralDescription: "",
       issueDate: new Date().toISOString().split('T')[0],
-      agentId: "current-user-id",
+      agentId: null,
       notes: "",
     },
   });

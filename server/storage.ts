@@ -280,6 +280,18 @@ export class DatabaseStorage implements IStorage {
 
   async createBond(bond: InsertBond): Promise<Bond> {
     const [newBond] = await db.insert(bonds).values(bond).returning();
+    
+    // Create activity record if agent is specified
+    if (bond.agentId) {
+      await this.createActivity({
+        userId: bond.agentId,
+        action: "created",
+        resourceType: "bond",
+        resourceId: newBond.id,
+        details: { bondNumber: newBond.bondNumber, clientId: newBond.clientId }
+      });
+    }
+    
     return newBond;
   }
 
@@ -387,22 +399,27 @@ export class DatabaseStorage implements IStorage {
       .from(bonds)
       .where(eq(bonds.status, 'active'));
     
+    // Total Revenue: Sum of premium amounts from all active bonds (money earned from writing bonds)
     const [totalRevenueResult] = await db
-      .select({ total: sql<number>`coalesce(sum(${payments.amount}), 0)` })
-      .from(payments)
-      .where(eq(payments.status, 'completed'));
+      .select({ total: sql<number>`coalesce(sum(${bonds.premiumAmount}), 0)` })
+      .from(bonds)
+      .where(eq(bonds.status, 'active'));
     
+    // Pending Payments: Sum of premium amounts where payment status is pending/partial
     const [pendingPaymentsResult] = await db
       .select({ total: sql<number>`coalesce(sum(${bonds.premiumAmount}), 0)` })
       .from(bonds)
-      .where(or(eq(bonds.paymentStatus, 'pending'), eq(bonds.paymentStatus, 'partial')));
+      .where(and(
+        eq(bonds.status, 'active'),
+        or(eq(bonds.paymentStatus, 'pending'), eq(bonds.paymentStatus, 'partial'))
+      ));
     
     const [upcomingCourtDatesResult] = await db
       .select({ count: sql<number>`count(*)` })
       .from(cases)
       .where(and(
         eq(cases.status, 'open'),
-        sql`${cases.courtDate}::date >= current_date`
+        sql`${cases.courtDate} IS NOT NULL AND ${cases.courtDate}::date >= current_date`
       ));
     
     return {

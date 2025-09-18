@@ -66,7 +66,7 @@ export const bonds = pgTable("bonds", {
   issueDate: text("issue_date").notNull(),
   exonerationDate: text("exoneration_date"),
   paymentStatus: text("payment_status").notNull().default("pending"), // pending, partial, paid_full, overdue
-  agentId: varchar("agent_id").notNull().references(() => users.id),
+  agentId: varchar("agent_id").references(() => users.id),
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
