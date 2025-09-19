@@ -180,9 +180,13 @@ export function AddBondModal({ open, onOpenChange }: AddBondModalProps) {
                         <SelectValue placeholder="Select client" />
                       </SelectTrigger>
                     </FormControl>
-                    <SelectContent>
+                    <SelectContent 
+                      className="z-[9999]" 
+                      position="popper"
+                      sideOffset={5}
+                    >
                       {clients.map((client: any) => (
-                        <SelectItem key={client.id} value={client.id}>
+                        <SelectItem key={client.id} value={client.id} data-testid={`client-option-${client.id}`}>
                           {client.firstName} {client.lastName}
                         </SelectItem>
                       ))}
@@ -202,12 +206,16 @@ export function AddBondModal({ open, onOpenChange }: AddBondModalProps) {
                   <Select onValueChange={field.onChange} value={field.value} disabled={!selectedClientId}>
                     <FormControl>
                       <SelectTrigger data-testid="select-case">
-                        <SelectValue placeholder="Select case" />
+                        <SelectValue placeholder={!selectedClientId ? "Select client first" : "Select case"} />
                       </SelectTrigger>
                     </FormControl>
-                    <SelectContent>
+                    <SelectContent 
+                      className="z-[9999]" 
+                      position="popper"
+                      sideOffset={5}
+                    >
                       {cases.map((case_: any) => (
-                        <SelectItem key={case_.id} value={case_.id}>
+                        <SelectItem key={case_.id} value={case_.id} data-testid={`case-option-${case_.id}`}>
                           {case_.caseNumber} - {case_.charges}
                         </SelectItem>
                       ))}
