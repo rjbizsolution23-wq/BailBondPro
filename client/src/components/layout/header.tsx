@@ -1,5 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LanguageSwitcher } from "@/components/ui/language-switcher";
+import { useLanguage } from "@/contexts/language-context";
 
 interface HeaderProps {
   title: string;
@@ -9,6 +11,8 @@ interface HeaderProps {
 }
 
 export function Header({ title, subtitle, onNewBond, showNewBondButton = true }: HeaderProps) {
+  const { t } = useLanguage();
+  
   return (
     <header className="bg-card border-b border-border px-6 py-4">
       <div className="flex items-center justify-between">
@@ -20,12 +24,13 @@ export function Header({ title, subtitle, onNewBond, showNewBondButton = true }:
           <div className="relative">
             <Input
               type="text"
-              placeholder="Search clients, cases..."
+              placeholder={t('search.placeholder')}
               className="w-64"
               data-testid="global-search-input"
             />
             <i className="fas fa-search absolute right-3 top-3 text-muted-foreground"></i>
           </div>
+          <LanguageSwitcher />
           <button 
             className="relative p-2 text-muted-foreground hover:text-foreground"
             data-testid="notifications-button"
@@ -35,7 +40,7 @@ export function Header({ title, subtitle, onNewBond, showNewBondButton = true }:
           </button>
           {showNewBondButton && (
             <Button onClick={onNewBond} data-testid="new-bond-button">
-              <i className="fas fa-plus mr-2"></i>New Bond
+              <i className="fas fa-plus mr-2"></i>{t('bonds.addBond')}
             </Button>
           )}
         </div>

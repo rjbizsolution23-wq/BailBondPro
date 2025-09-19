@@ -3,10 +3,15 @@ import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RevenueChart } from "@/components/charts/revenue-chart";
+import { AISearch } from "@/components/ui/ai-search";
+import { ClientCheckin } from "@/components/ui/client-checkin";
+import { useLanguage } from "@/contexts/language-context";
 import { api } from "@/lib/api";
 import { DashboardStats, RecentActivity, CourtDate } from "@/lib/types";
 
 export default function Dashboard() {
+  const { t } = useLanguage();
+  
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],
     queryFn: api.getDashboardStats,
@@ -72,11 +77,17 @@ export default function Dashboard() {
   return (
     <div className="flex-1 overflow-hidden">
       <Header
-        title="Dashboard"
-        subtitle="Overview of your bail bonds business"
+        title={t('dashboard.title')}
+        subtitle={t('dashboard.overview')}
       />
 
       <div className="p-6 overflow-y-auto h-full">
+        {/* AI Search and Client Check-in */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <AISearch />
+          <ClientCheckin />
+        </div>
+
         {/* Dashboard Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card data-testid="stat-active-bonds">

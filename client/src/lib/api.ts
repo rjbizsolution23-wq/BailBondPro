@@ -111,4 +111,20 @@ export const api = {
       }
       return res.json();
     }),
+
+  // AI Services
+  aiSearch: (query: string, language?: 'en' | 'es') =>
+    apiRequest("POST", "/api/ai/search", { query, language }).then(res => res.json()),
+
+  translateText: (text: string, fromLanguage: 'en' | 'es', toLanguage: 'en' | 'es') =>
+    apiRequest("POST", "/api/ai/translate", { text, fromLanguage, toLanguage }).then(res => res.json()),
+
+  verifyPhoto: (imageData: string) =>
+    apiRequest("POST", "/api/ai/verify-photo", { imageData }).then(res => res.json()),
+
+  getAIHelp: (question: string, language?: 'en' | 'es') =>
+    apiRequest("POST", "/api/ai/help", { question, language }).then(res => res.json()),
+
+  analyzeCompliance: (caseId: string) =>
+    apiRequest("POST", "/api/ai/analyze-compliance", { caseId }).then(res => res.json()),
 };

@@ -6,6 +6,7 @@ import { promises as fs } from "fs";
 import { storage } from "./storage";
 import { insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema, insertDocumentSchema } from "@shared/schema";
 import { z } from "zod";
+import { aiService } from "./ai-services";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
@@ -449,6 +450,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.status(500).json({ 
         error: error instanceof Error ? error.message : "Failed to upload documents" 
+      });
+    }
+  });
+
+  // AI-powered routes
+  
+  // Intelligent search across all data
+  app.post("/api/ai/search", async (req, res) => {
+    try {
+      const { query, language = 'en' } = req.body;
+      
+      if (!query || typeof query !== 'string') {
+        return res.status(400).json({ error: "Search query is required" });
+      }
+
+      // Gather all data for search
+      const [clients, cases, bonds, payments, documents] = await Promise.all([
+        storage.getClients(),
+        storage.getCases(),
+        storage.getBonds(),
+        storage.getPayments(),
+        storage.getDocuments()
+      ]);
+
+      const results = await aiService.intelligentSearch(query, {
+        clients,
+        cases,
+        bonds,
+        payments,
+        documents
+      }, language);
+
+      res.json({ results });
+    } catch (error) {
+      console.error('AI search error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Search failed" 
+      });
+    }
+  });
+
+  // Text translation
+  app.post("/api/ai/translate", async (req, res) => {
+    try {
+      const { text, fromLanguage, toLanguage } = req.body;
+      
+      if (!text || !fromLanguage || !toLanguage) {
+        return res.status(400).json({ 
+          error: "Text, fromLanguage, and toLanguage are required" 
+        });
+      }
+
+      const translation = await aiService.translateText({
+        text,
+        fromLanguage,
+        toLanguage
+      });
+
+      res.json({ translation });
+    } catch (error) {
+      console.error('Translation error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Translation failed" 
+      });
+    }
+  });
+
+  // Photo verification for check-ins
+  app.post("/api/ai/verify-photo", async (req, res) => {
+    try {
+      const { imageData } = req.body;
+      
+      if (!imageData) {
+        return res.status(400).json({ error: "Image data is required" });
+      }
+
+      // Remove data:image/jpeg;base64, prefix if present
+      const base64Image = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
+      
+      const verification = await aiService.verifyCheckinPhoto(base64Image);
+      res.json(verification);
+    } catch (error) {
+      console.error('Photo verification error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Photo verification failed" 
+      });
+    }
+  });
+
+  // AI help and guidance
+  app.post("/api/ai/help", async (req, res) => {
+    try {
+      const { question, language = 'en' } = req.body;
+      
+      if (!question || typeof question !== 'string') {
+        return res.status(400).json({ error: "Question is required" });
+      }
+
+      const response = await aiService.generateHelp(question, language);
+      res.json({ response });
+    } catch (error) {
+      console.error('AI help error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Help generation failed" 
+      });
+    }
+  });
+
+  // Case compliance analysis
+  app.post("/api/ai/analyze-compliance", async (req, res) => {
+    try {
+      const { caseId } = req.body;
+      
+      if (!caseId) {
+        return res.status(400).json({ error: "Case ID is required" });
+      }
+
+      const caseData = await storage.getCase(caseId);
+      if (!caseData) {
+        return res.status(404).json({ error: "Case not found" });
+      }
+
+      // Get check-in history (placeholder - would need to implement check-ins)
+      const checkins: any[] = [];
+      
+      const analysis = await aiService.analyzeCaseCompliance(caseData, checkins);
+      res.json(analysis);
+    } catch (error) {
+      console.error('Compliance analysis error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Compliance analysis failed" 
       });
     }
   });
