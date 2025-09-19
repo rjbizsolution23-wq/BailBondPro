@@ -87,4 +87,15 @@ export const api = {
     if (filters?.relatedId) params.append("relatedId", filters.relatedId);
     return fetch(`/api/documents${params.toString() ? `?${params}` : ""}`).then(res => res.json());
   },
+
+  uploadDocuments: (formData: FormData) =>
+    fetch("/api/documents/upload", {
+      method: "POST",
+      body: formData,
+    }).then(res => {
+      if (!res.ok) {
+        throw new Error(`Upload failed: ${res.statusText}`);
+      }
+      return res.json();
+    }),
 };

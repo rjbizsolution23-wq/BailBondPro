@@ -11,10 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UploadDocumentModal } from "@/components/modals/upload-document-modal";
 import { api } from "@/lib/api";
 
 export default function Documents() {
   const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ["/api/documents", { category: categoryFilter }],
@@ -100,7 +102,10 @@ export default function Documents() {
             <h3 className="text-xl font-semibold text-foreground">Document Management</h3>
             <p className="text-muted-foreground">Manage contracts, court papers, and client documents</p>
           </div>
-          <Button data-testid="button-upload-document">
+          <Button 
+            data-testid="button-upload-document"
+            onClick={() => setUploadModalOpen(true)}
+          >
             <i className="fas fa-upload mr-2"></i>Upload Document
           </Button>
         </div>
@@ -266,6 +271,12 @@ export default function Documents() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Upload Document Modal */}
+      <UploadDocumentModal
+        open={uploadModalOpen}
+        onOpenChange={setUploadModalOpen}
+      />
     </div>
   );
 }

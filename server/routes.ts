@@ -1,10 +1,60 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import multer from "multer";
+import path from "path";
+import { promises as fs } from "fs";
 import { storage } from "./storage";
-import { insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema } from "@shared/schema";
+import { insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema, insertDocumentSchema } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  
+  // Configure multer for file uploads
+  const uploadsDir = path.join(process.cwd(), 'uploads');
+  
+  // Ensure uploads directory exists
+  await fs.mkdir(uploadsDir, { recursive: true });
+  
+  const multerStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, uploadsDir);
+    },
+    filename: (req, file, cb) => {
+      // Create unique filename with timestamp and random string
+      const timestamp = Date.now();
+      const randomString = Math.random().toString(36).substring(2, 15);
+      const ext = path.extname(file.originalname);
+      const filename = `${timestamp}_${randomString}${ext}`;
+      cb(null, filename);
+    }
+  });
+  
+  const upload = multer({
+    storage: multerStorage,
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit per file
+      files: 10 // Maximum 10 files per upload
+    },
+    fileFilter: (req, file, cb) => {
+      // Allow common document types
+      const allowedTypes = [
+        'application/pdf',
+        'image/jpeg',
+        'image/jpg', 
+        'image/png',
+        'image/gif',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain'
+      ];
+      
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Invalid file type: ${file.mimetype}. Only PDF, images, Word documents, and text files are allowed.`));
+      }
+    }
+  });
   
   // Dashboard routes
   app.get("/api/dashboard/stats", async (req, res) => {
@@ -306,6 +356,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(documents);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch documents" });
+    }
+  });
+
+  app.post("/api/documents/upload", upload.array('files'), async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: "No files uploaded" });
+      }
+
+      const { category, relatedType, relatedId, notes } = req.body;
+      
+      if (!category) {
+        return res.status(400).json({ error: "Category is required" });
+      }
+
+      // For now, use a default user ID since auth isn't implemented yet
+      const defaultUserId = "system-user";
+      
+      // Create document records for each uploaded file
+      const createdDocuments = [];
+      
+      for (const file of files) {
+        const documentData = {
+          filename: file.filename,
+          originalName: file.originalname,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+          category,
+          relatedId: relatedId || undefined,
+          relatedType: relatedType || undefined,
+          uploadedBy: defaultUserId,
+          notes: notes || undefined,
+        };
+
+        // Validate the document data against the insert schema
+        const validatedData = insertDocumentSchema.parse(documentData);
+        
+        const document = await storage.createDocument(validatedData);
+        createdDocuments.push(document);
+      }
+
+      res.status(201).json({ 
+        message: `Successfully uploaded ${createdDocuments.length} document(s)`,
+        documents: createdDocuments 
+      });
+      
+    } catch (error) {
+      // Clean up uploaded files if document creation fails
+      const files = req.files as Express.Multer.File[];
+      if (files) {
+        for (const file of files) {
+          try {
+            await fs.unlink(file.path);
+          } catch (unlinkError) {
+            console.error(`Failed to clean up file ${file.filename}:`, unlinkError);
+          }
+        }
+      }
+      
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      
+      if (error instanceof multer.MulterError) {
+        let message = "File upload error";
+        if (error.code === 'LIMIT_FILE_SIZE') {
+          message = "File too large. Maximum size is 10MB per file.";
+        } else if (error.code === 'LIMIT_FILE_COUNT') {
+          message = "Too many files. Maximum is 10 files per upload.";
+        }
+        return res.status(400).json({ error: message });
+      }
+      
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Failed to upload documents" 
+      });
     }
   });
 

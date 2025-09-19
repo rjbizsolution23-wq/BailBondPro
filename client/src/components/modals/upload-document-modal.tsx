@@ -98,6 +98,8 @@ export function UploadDocumentModal({ open, onOpenChange }: UploadDocumentModalP
           value: bond.id,
           label: `${bond.bondNumber} - ${bond.client_name || 'Unknown Client'}`,
         }));
+      case "none":
+        return [];
       default:
         return [];
     }
@@ -114,8 +116,8 @@ export function UploadDocumentModal({ open, onOpenChange }: UploadDocumentModalP
         formData.append(`files`, file);
       });
       formData.append("category", data.category);
-      if (data.relatedType) formData.append("relatedType", data.relatedType);
-      if (data.relatedId) formData.append("relatedId", data.relatedId);
+      if (data.relatedType && data.relatedType !== "none") formData.append("relatedType", data.relatedType);
+      if (data.relatedId && data.relatedType !== "none") formData.append("relatedId", data.relatedId);
       if (data.notes) formData.append("notes", data.notes);
 
       return api.uploadDocuments(formData);
@@ -326,7 +328,7 @@ export function UploadDocumentModal({ open, onOpenChange }: UploadDocumentModalP
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="">None</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
                         <SelectItem value="client">Client</SelectItem>
                         <SelectItem value="case">Case</SelectItem>
                         <SelectItem value="bond">Bond</SelectItem>
@@ -337,7 +339,7 @@ export function UploadDocumentModal({ open, onOpenChange }: UploadDocumentModalP
                 )}
               />
 
-              {selectedRelatedType && (
+              {selectedRelatedType && selectedRelatedType !== "none" && (
                 <FormField
                   control={form.control}
                   name="relatedId"
@@ -351,7 +353,7 @@ export function UploadDocumentModal({ open, onOpenChange }: UploadDocumentModalP
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {getRelatedOptions().map((option) => (
+                          {getRelatedOptions().map((option: { value: string; label: string }) => (
                             <SelectItem key={option.value} value={option.value}>
                               {option.label}
                             </SelectItem>
