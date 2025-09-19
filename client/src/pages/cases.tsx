@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/layout/header";
 import { AddCaseModal } from "@/components/modals/add-case-modal";
+import { CaseDetailsModal } from "@/components/modals/case-details-modal";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +29,8 @@ export default function Cases() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [caseDetailsModalOpen, setCaseDetailsModalOpen] = useState(false);
   
   const { data: cases = [], isLoading } = useQuery({
     queryKey: ["/api/cases"],
@@ -89,6 +92,11 @@ export default function Cases() {
       minute: '2-digit',
       hour12: true,
     });
+  };
+
+  const handleViewCaseDetails = (caseId: string) => {
+    setSelectedCaseId(caseId);
+    setCaseDetailsModalOpen(true);
   };
 
   return (
@@ -266,6 +274,7 @@ export default function Cases() {
                             <button 
                               className="text-primary hover:text-primary/80" 
                               title="View Details"
+                              onClick={() => handleViewCaseDetails(case_.id)}
                               data-testid={`button-view-${case_.id}`}
                             >
                               <i className="fas fa-eye"></i>
@@ -273,6 +282,7 @@ export default function Cases() {
                             <button 
                               className="text-muted-foreground hover:text-foreground" 
                               title="Edit"
+                              onClick={() => handleViewCaseDetails(case_.id)}
                               data-testid={`button-edit-${case_.id}`}
                             >
                               <i className="fas fa-edit"></i>
@@ -280,6 +290,7 @@ export default function Cases() {
                             <button 
                               className="text-muted-foreground hover:text-foreground" 
                               title="Documents"
+                              onClick={() => handleViewCaseDetails(case_.id)}
                               data-testid={`button-documents-${case_.id}`}
                             >
                               <i className="fas fa-file-alt"></i>
@@ -341,6 +352,17 @@ export default function Cases() {
       <AddCaseModal
         open={showAddModal}
         onOpenChange={setShowAddModal}
+      />
+
+      <CaseDetailsModal
+        caseId={selectedCaseId}
+        open={caseDetailsModalOpen}
+        onOpenChange={(open) => {
+          setCaseDetailsModalOpen(open);
+          if (!open) {
+            setSelectedCaseId(null);
+          }
+        }}
       />
     </div>
   );

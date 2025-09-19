@@ -345,13 +345,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Activity routes
+  app.get("/api/activities", async (req, res) => {
+    try {
+      const { resourceId, resourceType, limit } = req.query;
+      const activities = await storage.getActivities({
+        resourceId: resourceId as string,
+        resourceType: resourceType as string,
+        limit: limit ? parseInt(limit as string) : 50,
+      });
+      res.json(activities);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch activities" });
+    }
+  });
+
   // Document routes
   app.get("/api/documents", async (req, res) => {
     try {
-      const { category, relatedId } = req.query;
+      const { category, relatedId, relatedType } = req.query;
       const documents = await storage.getDocuments({
         category: category as string,
         relatedId: relatedId as string,
+        relatedType: relatedType as string,
       });
       res.json(documents);
     } catch (error) {

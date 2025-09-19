@@ -42,9 +42,11 @@ type DocumentFormData = z.infer<typeof documentSchema>;
 interface UploadDocumentModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  defaultRelatedType?: string;
+  defaultRelatedId?: string;
 }
 
-export function UploadDocumentModal({ open, onOpenChange }: UploadDocumentModalProps) {
+export function UploadDocumentModal({ open, onOpenChange, defaultRelatedType, defaultRelatedId }: UploadDocumentModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,8 +57,8 @@ export function UploadDocumentModal({ open, onOpenChange }: UploadDocumentModalP
     resolver: zodResolver(documentSchema),
     defaultValues: {
       category: "",
-      relatedType: "",
-      relatedId: "",
+      relatedType: defaultRelatedType || "",
+      relatedId: defaultRelatedId || "",
       notes: "",
     },
   });

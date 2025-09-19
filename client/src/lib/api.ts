@@ -42,6 +42,9 @@ export const api = {
     return fetch(`/api/cases${params.toString() ? `?${params}` : ""}`).then(res => res.json());
   },
 
+  getCase: (id: string) =>
+    fetch(`/api/cases/${id}`).then(res => res.json()),
+
   createCase: (data: any) =>
     apiRequest("POST", "/api/cases", data).then(res => res.json()),
 
@@ -80,11 +83,21 @@ export const api = {
   getFinancialSummary: () =>
     fetch("/api/financial/summary").then(res => res.json()),
 
+  // Activities  
+  getActivities: (filters?: { resourceId?: string; resourceType?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.resourceId) params.append("resourceId", filters.resourceId);
+    if (filters?.resourceType) params.append("resourceType", filters.resourceType);
+    if (filters?.limit) params.append("limit", filters.limit.toString());
+    return fetch(`/api/activities${params.toString() ? `?${params}` : ""}`).then(res => res.json());
+  },
+
   // Documents
-  getDocuments: (filters?: { category?: string; relatedId?: string }) => {
+  getDocuments: (filters?: { category?: string; relatedId?: string; relatedType?: string }) => {
     const params = new URLSearchParams();
     if (filters?.category) params.append("category", filters.category);
     if (filters?.relatedId) params.append("relatedId", filters.relatedId);
+    if (filters?.relatedType) params.append("relatedType", filters.relatedType);
     return fetch(`/api/documents${params.toString() ? `?${params}` : ""}`).then(res => res.json());
   },
 

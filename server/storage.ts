@@ -52,13 +52,13 @@ export interface IStorage {
 
   // Documents
   getDocument(id: string): Promise<Document | undefined>;
-  getDocuments(filter?: { category?: string; relatedId?: string }): Promise<Document[]>;
+  getDocuments(filter?: { category?: string; relatedId?: string; relatedType?: string }): Promise<Document[]>;
   createDocument(document: InsertDocument): Promise<Document>;
   updateDocument(id: string, document: Partial<Document>): Promise<Document>;
   deleteDocument(id: string): Promise<boolean>;
 
   // Activities
-  getActivities(limit?: number): Promise<Activity[]>;
+  getActivities(filter?: { resourceId?: string; resourceType?: string; limit?: number }): Promise<Activity[]>;
   createActivity(activity: InsertActivity): Promise<Activity>;
 
   // Dashboard & Analytics
@@ -350,13 +350,16 @@ export class DatabaseStorage implements IStorage {
     return document || undefined;
   }
 
-  async getDocuments(filter?: { category?: string; relatedId?: string }): Promise<Document[]> {
+  async getDocuments(filter?: { category?: string; relatedId?: string; relatedType?: string }): Promise<Document[]> {
     const conditions = [];
     if (filter?.category) {
       conditions.push(eq(documents.category, filter.category));
     }
     if (filter?.relatedId) {
       conditions.push(eq(documents.relatedId, filter.relatedId));
+    }
+    if (filter?.relatedType) {
+      conditions.push(eq(documents.relatedType, filter.relatedType));
     }
     
     if (conditions.length > 0) {
@@ -383,7 +386,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Activities
-  async getActivities(limit: number = 50): Promise<Activity[]> {
+  async getActivities(filter?: { resourceId?: string; resourceType?: string; limit?: number }): Promise<Activity[]> {
+    const conditions = [];
+    const limit = filter?.limit || 50;
+    
+    if (filter?.resourceId) {
+      conditions.push(eq(activities.resourceId, filter.resourceId));
+    }
+    if (filter?.resourceType) {
+      conditions.push(eq(activities.resourceType, filter.resourceType));
+    }
+    
+    if (conditions.length > 0) {
+      return db.select().from(activities).where(and(...conditions)).orderBy(desc(activities.createdAt)).limit(limit);
+    }
+    
     return db.select().from(activities).orderBy(desc(activities.createdAt)).limit(limit);
   }
 
