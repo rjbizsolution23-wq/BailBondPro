@@ -31,6 +31,11 @@ export const clients = pgTable("clients", {
   emergencyPhone: text("emergency_phone"),
   status: text("status").notNull().default("active"), // active, inactive, high_risk
   notes: text("notes"),
+  // Client portal authentication fields
+  portalUsername: text("portal_username").unique(),
+  portalPassword: text("portal_password"),
+  portalEnabled: boolean("portal_enabled").notNull().default(false),
+  lastCheckin: timestamp("last_checkin"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -112,6 +117,19 @@ export const activities = pgTable("activities", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const clientCheckins = pgTable("client_checkins", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id),
+  bondId: varchar("bond_id").notNull().references(() => bonds.id),
+  photoUrl: text("photo_url"),
+  latitude: decimal("latitude", { precision: 10, scale: 8 }),
+  longitude: decimal("longitude", { precision: 11, scale: 8 }),
+  locationName: text("location_name"),
+  notes: text("notes"),
+  status: text("status").notNull().default("completed"), // completed, failed, pending_review
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -161,6 +179,14 @@ export const insertActivitySchema = createInsertSchema(activities).omit({
   createdAt: true,
 });
 
+export const insertClientCheckinSchema = createInsertSchema(clientCheckins).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  latitude: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional(),
+  longitude: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional(),
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -182,6 +208,9 @@ export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 
 export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = z.infer<typeof insertActivitySchema>;
+
+export type ClientCheckin = typeof clientCheckins.$inferSelect;
+export type InsertClientCheckin = z.infer<typeof insertClientCheckinSchema>;
 
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
@@ -219,4 +248,9 @@ export const documentsRelations = relations(documents, ({ one }) => ({
 
 export const activitiesRelations = relations(activities, ({ one }) => ({
   user: one(users, { fields: [activities.userId], references: [users.id] }),
+}));
+
+export const clientCheckinsRelations = relations(clientCheckins, ({ one }) => ({
+  client: one(clients, { fields: [clientCheckins.clientId], references: [clients.id] }),
+  bond: one(bonds, { fields: [clientCheckins.bondId], references: [bonds.id] }),
 }));

@@ -6,7 +6,8 @@ import {
   type Payment, type InsertPayment,
   type Document, type InsertDocument,
   type Activity, type InsertActivity,
-  users, clients, cases, bonds, payments, documents, activities
+  type ClientCheckin, type InsertClientCheckin,
+  users, clients, cases, bonds, payments, documents, activities, clientCheckins
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, like, and, or, sql } from "drizzle-orm";
@@ -66,6 +67,23 @@ export interface IStorage {
   getRecentActivity(limit?: number): Promise<any[]>;
   getUpcomingCourtDates(limit?: number): Promise<any[]>;
   getFinancialSummary(): Promise<any>;
+
+  // Client Portal Authentication
+  getClientByPortalUsername(username: string): Promise<Client | undefined>;
+  enableClientPortal(clientId: string, username: string, password: string): Promise<Client>;
+  authenticateClient(username: string, password: string): Promise<Client | null>;
+  updateClientLastCheckin(clientId: string): Promise<Client>;
+
+  // Client Check-ins
+  getClientCheckin(id: string): Promise<ClientCheckin | undefined>;
+  getClientCheckins(filter?: { clientId?: string; bondId?: string }): Promise<ClientCheckin[]>;
+  createClientCheckin(checkin: InsertClientCheckin): Promise<ClientCheckin>;
+  updateClientCheckin(id: string, checkin: Partial<ClientCheckin>): Promise<ClientCheckin>;
+
+  // Client Portal Data
+  getClientBonds(clientId: string): Promise<Bond[]>;
+  getClientCases(clientId: string): Promise<Case[]>;
+  getClientUpcomingCourtDates(clientId: string): Promise<any[]>;
 }
 
 
@@ -539,6 +557,122 @@ export class DatabaseStorage implements IStorage {
       outstanding: Number(outstandingResult?.total || 0),
       collectionRate: Math.round(collectionRate * 10) / 10
     };
+  }
+
+  // Client Portal Authentication
+  async getClientByPortalUsername(username: string): Promise<Client | undefined> {
+    const [client] = await db.select().from(clients).where(eq(clients.portalUsername, username));
+    return client || undefined;
+  }
+
+  async enableClientPortal(clientId: string, username: string, password: string): Promise<Client> {
+    const [updatedClient] = await db
+      .update(clients)
+      .set({ 
+        portalUsername: username, 
+        portalPassword: password, 
+        portalEnabled: true 
+      })
+      .where(eq(clients.id, clientId))
+      .returning();
+    if (!updatedClient) throw new Error("Client not found");
+    return updatedClient;
+  }
+
+  async authenticateClient(username: string, password: string): Promise<Client | null> {
+    const [client] = await db
+      .select()
+      .from(clients)
+      .where(and(
+        eq(clients.portalUsername, username),
+        eq(clients.portalPassword, password),
+        eq(clients.portalEnabled, true)
+      ));
+    return client || null;
+  }
+
+  async updateClientLastCheckin(clientId: string): Promise<Client> {
+    const [updatedClient] = await db
+      .update(clients)
+      .set({ lastCheckin: sql`now()` })
+      .where(eq(clients.id, clientId))
+      .returning();
+    if (!updatedClient) throw new Error("Client not found");
+    return updatedClient;
+  }
+
+  // Client Check-ins
+  async getClientCheckin(id: string): Promise<ClientCheckin | undefined> {
+    const [checkin] = await db.select().from(clientCheckins).where(eq(clientCheckins.id, id));
+    return checkin || undefined;
+  }
+
+  async getClientCheckins(filter?: { clientId?: string; bondId?: string }): Promise<ClientCheckin[]> {
+    const conditions = [];
+    if (filter?.clientId) {
+      conditions.push(eq(clientCheckins.clientId, filter.clientId));
+    }
+    if (filter?.bondId) {
+      conditions.push(eq(clientCheckins.bondId, filter.bondId));
+    }
+    
+    if (conditions.length > 0) {
+      return db.select().from(clientCheckins).where(and(...conditions)).orderBy(desc(clientCheckins.createdAt));
+    }
+    
+    return db.select().from(clientCheckins).orderBy(desc(clientCheckins.createdAt));
+  }
+
+  async createClientCheckin(checkin: InsertClientCheckin): Promise<ClientCheckin> {
+    const [newCheckin] = await db.insert(clientCheckins).values(checkin).returning();
+    return newCheckin;
+  }
+
+  async updateClientCheckin(id: string, checkin: Partial<ClientCheckin>): Promise<ClientCheckin> {
+    const [updated] = await db.update(clientCheckins).set(checkin).where(eq(clientCheckins.id, id)).returning();
+    if (!updated) throw new Error("Check-in not found");
+    return updated;
+  }
+
+  // Client Portal Data
+  async getClientBonds(clientId: string): Promise<Bond[]> {
+    return db.select().from(bonds).where(eq(bonds.clientId, clientId)).orderBy(desc(bonds.createdAt));
+  }
+
+  async getClientCases(clientId: string): Promise<Case[]> {
+    return db.select().from(cases).where(eq(cases.clientId, clientId)).orderBy(desc(cases.createdAt));
+  }
+
+  async getClientUpcomingCourtDates(clientId: string): Promise<any[]> {
+    const result = await db
+      .select({
+        id: cases.id,
+        caseNumber: cases.caseNumber,
+        charges: cases.charges,
+        arrestDate: cases.arrestDate,
+        courtDate: cases.courtDate,
+        courtLocation: cases.courtLocation,
+        judgeName: cases.judgeName,
+        prosecutorName: cases.prosecutorName,
+        defenseAttorney: cases.defenseAttorney,
+        status: cases.status,
+        bondNumber: bonds.bondNumber,
+        bondAmount: bonds.bondAmount
+      })
+      .from(cases)
+      .leftJoin(bonds, eq(cases.id, bonds.caseId))
+      .where(and(
+        eq(cases.clientId, clientId),
+        eq(cases.status, 'open'),
+        sql`${cases.courtDate}::date >= current_date`
+      ))
+      .orderBy(sql`${cases.courtDate}::date`);
+    
+    return result.map(row => ({
+      ...row,
+      bond_number: row.bondNumber,
+      bond_amount: row.bondAmount
+    }));
   }
 }
 

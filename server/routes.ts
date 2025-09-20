@@ -585,6 +585,214 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // CLIENT PORTAL API ROUTES
+  
+  // Client Portal Authentication
+  app.post("/api/client/login", async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ error: "Username and password are required" });
+      }
+
+      const client = await storage.authenticateClient(username, password);
+      
+      if (!client) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      // Update last check-in time
+      await storage.updateClientLastCheckin(client.id);
+
+      // Return client data without password
+      const { portalPassword, ...clientData } = client;
+      res.json({ 
+        success: true, 
+        client: clientData,
+        message: "Login successful" 
+      });
+    } catch (error) {
+      console.error('Client login error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Login failed" 
+      });
+    }
+  });
+
+  // Enable portal access for a client (admin use)
+  app.post("/api/client/:clientId/enable-portal", async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      const { username, password } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ error: "Username and password are required" });
+      }
+
+      const updatedClient = await storage.enableClientPortal(clientId, username, password);
+      const { portalPassword, ...clientData } = updatedClient;
+      
+      res.json({ 
+        success: true, 
+        client: clientData,
+        message: "Portal access enabled successfully" 
+      });
+    } catch (error) {
+      console.error('Portal enable error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Failed to enable portal access" 
+      });
+    }
+  });
+
+  // Client Dashboard Data
+  app.get("/api/client/:clientId/dashboard", async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      
+      const [client, bonds, cases, upcomingCourtDates, recentCheckins] = await Promise.all([
+        storage.getClient(clientId),
+        storage.getClientBonds(clientId),
+        storage.getClientCases(clientId),
+        storage.getClientUpcomingCourtDates(clientId),
+        storage.getClientCheckins({ clientId })
+      ]);
+
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      res.json({
+        client: {
+          id: client.id,
+          firstName: client.firstName,
+          lastName: client.lastName,
+          phone: client.phone,
+          email: client.email,
+          status: client.status,
+          lastCheckin: client.lastCheckin
+        },
+        bonds,
+        cases,
+        upcomingCourtDates,
+        recentCheckins: recentCheckins.slice(0, 5) // Last 5 check-ins
+      });
+    } catch (error) {
+      console.error('Client dashboard error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Failed to fetch dashboard data" 
+      });
+    }
+  });
+
+  // Client Photo Check-in
+  app.post("/api/client/:clientId/checkin", upload.single('photo'), async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      const { bondId, latitude, longitude, locationName, notes } = req.body;
+      
+      if (!bondId) {
+        return res.status(400).json({ error: "Bond ID is required" });
+      }
+
+      let photoUrl = null;
+      if (req.file) {
+        photoUrl = `/uploads/${req.file.filename}`;
+      }
+
+      const checkinData = {
+        clientId,
+        bondId,
+        photoUrl,
+        latitude: latitude ? String(latitude) : null,
+        longitude: longitude ? String(longitude) : null,
+        locationName: locationName || null,
+        notes: notes || null,
+        status: 'completed' as const
+      };
+
+      const newCheckin = await storage.createClientCheckin(checkinData);
+      
+      // Update client's last check-in time
+      await storage.updateClientLastCheckin(clientId);
+
+      res.json({ 
+        success: true, 
+        checkin: newCheckin,
+        message: "Check-in completed successfully" 
+      });
+    } catch (error) {
+      console.error('Client check-in error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Check-in failed" 
+      });
+    }
+  });
+
+  // Get client check-in history
+  app.get("/api/client/:clientId/checkins", async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      const { bondId } = req.query;
+      
+      const filter: any = { clientId };
+      if (bondId) {
+        filter.bondId = bondId as string;
+      }
+
+      const checkins = await storage.getClientCheckins(filter);
+      res.json(checkins);
+    } catch (error) {
+      console.error('Client checkins fetch error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Failed to fetch check-ins" 
+      });
+    }
+  });
+
+  // Get client bonds
+  app.get("/api/client/:clientId/bonds", async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      const bonds = await storage.getClientBonds(clientId);
+      res.json(bonds);
+    } catch (error) {
+      console.error('Client bonds fetch error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Failed to fetch bonds" 
+      });
+    }
+  });
+
+  // Get client cases
+  app.get("/api/client/:clientId/cases", async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      const cases = await storage.getClientCases(clientId);
+      res.json(cases);
+    } catch (error) {
+      console.error('Client cases fetch error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Failed to fetch cases" 
+      });
+    }
+  });
+
+  // Get client court dates
+  app.get("/api/client/:clientId/court-dates", async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      const courtDates = await storage.getClientUpcomingCourtDates(clientId);
+      res.json(courtDates);
+    } catch (error) {
+      console.error('Client court dates fetch error:', error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Failed to fetch court dates" 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
