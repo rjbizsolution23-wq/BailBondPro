@@ -13,6 +13,7 @@ import Financial from "@/pages/financial";
 import Documents from "@/pages/documents";
 import Reports from "@/pages/reports";
 import Settings from "@/pages/settings";
+import { OnboardingPage } from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -28,6 +29,7 @@ function Router() {
         <Route path="/documents" component={Documents} />
         <Route path="/reports" component={Reports} />
         <Route path="/settings" component={Settings} />
+        <Route path="/onboarding" component={OnboardingPage} />
         <Route component={NotFound} />
       </Switch>
     </div>
