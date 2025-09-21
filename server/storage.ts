@@ -7,7 +7,13 @@ import {
   type Document, type InsertDocument,
   type Activity, type InsertActivity,
   type ClientCheckin, type InsertClientCheckin,
-  users, clients, cases, bonds, payments, documents, activities, clientCheckins
+  type ContractTemplate, type InsertContractTemplate,
+  type GeneratedContract, type InsertGeneratedContract,
+  type TrainingModule, type InsertTrainingModule,
+  type TrainingProgress, type InsertTrainingProgress,
+  type StandardOperatingProcedure, type InsertSOP,
+  users, clients, cases, bonds, payments, documents, activities, clientCheckins,
+  contractTemplates, generatedContracts, trainingModules, trainingProgress, standardOperatingProcedures
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, like, and, or, sql } from "drizzle-orm";
@@ -85,6 +91,40 @@ export interface IStorage {
   getClientBonds(clientId: string): Promise<Bond[]>;
   getClientCases(clientId: string): Promise<Case[]>;
   getClientUpcomingCourtDates(clientId: string): Promise<any[]>;
+
+  // Contract Templates
+  getContractTemplate(id: string): Promise<ContractTemplate | undefined>;
+  getContractTemplates(filter?: { type?: string; isActive?: boolean }): Promise<ContractTemplate[]>;
+  createContractTemplate(template: InsertContractTemplate): Promise<ContractTemplate>;
+  updateContractTemplate(id: string, template: Partial<ContractTemplate>): Promise<ContractTemplate>;
+  deleteContractTemplate(id: string): Promise<boolean>;
+
+  // Generated Contracts
+  getGeneratedContract(id: string): Promise<GeneratedContract | undefined>;
+  getGeneratedContracts(filter?: { clientId?: string; templateId?: string; status?: string }): Promise<GeneratedContract[]>;
+  createGeneratedContract(contract: InsertGeneratedContract): Promise<GeneratedContract>;
+  updateGeneratedContract(id: string, contract: Partial<GeneratedContract>): Promise<GeneratedContract>;
+  deleteGeneratedContract(id: string): Promise<boolean>;
+
+  // Training Modules
+  getTrainingModule(id: string): Promise<TrainingModule | undefined>;
+  getTrainingModules(filter?: { category?: string; isActive?: boolean; isRequired?: boolean }): Promise<TrainingModule[]>;
+  createTrainingModule(module: InsertTrainingModule): Promise<TrainingModule>;
+  updateTrainingModule(id: string, module: Partial<TrainingModule>): Promise<TrainingModule>;
+  deleteTrainingModule(id: string): Promise<boolean>;
+
+  // Training Progress
+  getTrainingProgress(userId: string, moduleId: string): Promise<TrainingProgress | undefined>;
+  getUserTrainingProgress(userId: string): Promise<TrainingProgress[]>;
+  createTrainingProgress(progress: InsertTrainingProgress): Promise<TrainingProgress>;
+  updateTrainingProgress(id: string, progress: Partial<TrainingProgress>): Promise<TrainingProgress>;
+
+  // Standard Operating Procedures
+  getSOP(id: string): Promise<StandardOperatingProcedure | undefined>;
+  getSOPs(filter?: { category?: string; isActive?: boolean }): Promise<StandardOperatingProcedure[]>;
+  createSOP(sop: InsertSOP): Promise<StandardOperatingProcedure>;
+  updateSOP(id: string, sop: Partial<StandardOperatingProcedure>): Promise<StandardOperatingProcedure>;
+  deleteSOP(id: string): Promise<boolean>;
 }
 
 
@@ -685,6 +725,204 @@ export class DatabaseStorage implements IStorage {
       bond_number: row.bondNumber,
       bond_amount: row.bondAmount
     }));
+  }
+
+  // Contract Templates
+  async getContractTemplate(id: string): Promise<ContractTemplate | undefined> {
+    const [template] = await db.select().from(contractTemplates).where(eq(contractTemplates.id, id));
+    return template || undefined;
+  }
+
+  async getContractTemplates(filter?: { type?: string; isActive?: boolean }): Promise<ContractTemplate[]> {
+    const conditions = [];
+    if (filter?.type) {
+      conditions.push(eq(contractTemplates.type, filter.type));
+    }
+    if (filter?.isActive !== undefined) {
+      conditions.push(eq(contractTemplates.isActive, filter.isActive));
+    }
+    
+    if (conditions.length > 0) {
+      return db.select().from(contractTemplates).where(and(...conditions)).orderBy(desc(contractTemplates.createdAt));
+    }
+    
+    return db.select().from(contractTemplates).orderBy(desc(contractTemplates.createdAt));
+  }
+
+  async createContractTemplate(template: InsertContractTemplate): Promise<ContractTemplate> {
+    const [newTemplate] = await db.insert(contractTemplates).values(template).returning();
+    return newTemplate;
+  }
+
+  async updateContractTemplate(id: string, template: Partial<ContractTemplate>): Promise<ContractTemplate> {
+    const [updated] = await db.update(contractTemplates).set(template).where(eq(contractTemplates.id, id)).returning();
+    if (!updated) throw new Error("Contract template not found");
+    return updated;
+  }
+
+  async deleteContractTemplate(id: string): Promise<boolean> {
+    const result = await db.delete(contractTemplates).where(eq(contractTemplates.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Generated Contracts
+  async getGeneratedContract(id: string): Promise<GeneratedContract | undefined> {
+    const [contract] = await db.select().from(generatedContracts).where(eq(generatedContracts.id, id));
+    return contract || undefined;
+  }
+
+  async getGeneratedContracts(filter?: { clientId?: string; templateId?: string; status?: string }): Promise<GeneratedContract[]> {
+    const conditions = [];
+    if (filter?.clientId) {
+      conditions.push(eq(generatedContracts.clientId, filter.clientId));
+    }
+    if (filter?.templateId) {
+      conditions.push(eq(generatedContracts.templateId, filter.templateId));
+    }
+    if (filter?.status) {
+      conditions.push(eq(generatedContracts.status, filter.status));
+    }
+    
+    if (conditions.length > 0) {
+      return db.select().from(generatedContracts).where(and(...conditions)).orderBy(desc(generatedContracts.createdAt));
+    }
+    
+    return db.select().from(generatedContracts).orderBy(desc(generatedContracts.createdAt));
+  }
+
+  async createGeneratedContract(contract: InsertGeneratedContract): Promise<GeneratedContract> {
+    const [newContract] = await db.insert(generatedContracts).values(contract).returning();
+    return newContract;
+  }
+
+  async updateGeneratedContract(id: string, contract: Partial<GeneratedContract>): Promise<GeneratedContract> {
+    const [updated] = await db.update(generatedContracts).set(contract).where(eq(generatedContracts.id, id)).returning();
+    if (!updated) throw new Error("Generated contract not found");
+    return updated;
+  }
+
+  async deleteGeneratedContract(id: string): Promise<boolean> {
+    const result = await db.delete(generatedContracts).where(eq(generatedContracts.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Training Modules
+  async getTrainingModule(id: string): Promise<TrainingModule | undefined> {
+    const [module] = await db.select().from(trainingModules).where(eq(trainingModules.id, id));
+    return module || undefined;
+  }
+
+  async getTrainingModules(filter?: { category?: string; isActive?: boolean; isRequired?: boolean }): Promise<TrainingModule[]> {
+    const conditions = [];
+    if (filter?.category) {
+      conditions.push(eq(trainingModules.category, filter.category));
+    }
+    if (filter?.isActive !== undefined) {
+      conditions.push(eq(trainingModules.isActive, filter.isActive));
+    }
+    if (filter?.isRequired !== undefined) {
+      conditions.push(eq(trainingModules.isRequired, filter.isRequired));
+    }
+    
+    if (conditions.length > 0) {
+      return db.select().from(trainingModules).where(and(...conditions)).orderBy(desc(trainingModules.createdAt));
+    }
+    
+    return db.select().from(trainingModules).orderBy(desc(trainingModules.createdAt));
+  }
+
+  async createTrainingModule(module: InsertTrainingModule): Promise<TrainingModule> {
+    const [newModule] = await db.insert(trainingModules).values(module).returning();
+    return newModule;
+  }
+
+  async updateTrainingModule(id: string, module: Partial<TrainingModule>): Promise<TrainingModule> {
+    const [updated] = await db.update(trainingModules).set(module).where(eq(trainingModules.id, id)).returning();
+    if (!updated) throw new Error("Training module not found");
+    return updated;
+  }
+
+  async deleteTrainingModule(id: string): Promise<boolean> {
+    const result = await db.delete(trainingModules).where(eq(trainingModules.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Training Progress
+  async getTrainingProgress(userId: string, moduleId: string): Promise<TrainingProgress | undefined> {
+    const [progress] = await db.select().from(trainingProgress).where(and(
+      eq(trainingProgress.userId, userId),
+      eq(trainingProgress.moduleId, moduleId)
+    ));
+    return progress || undefined;
+  }
+
+  async getUserTrainingProgress(userId: string): Promise<TrainingProgress[]> {
+    return db.select().from(trainingProgress).where(eq(trainingProgress.userId, userId)).orderBy(desc(trainingProgress.lastAccessed));
+  }
+
+  async createTrainingProgress(progress: InsertTrainingProgress): Promise<TrainingProgress> {
+    // Use upsert to handle unique constraint on (userId, moduleId)
+    // Prevent regressions by using GREATEST for progress tracking
+    const [newProgress] = await db.insert(trainingProgress)
+      .values(progress)
+      .onConflictDoUpdate({
+        target: [trainingProgress.userId, trainingProgress.moduleId],
+        set: {
+          progress: sql`GREATEST(${trainingProgress.progress}, ${progress.progress})`,
+          currentSection: sql`GREATEST(${trainingProgress.currentSection}, ${progress.currentSection})`,
+          timeSpent: sql`${trainingProgress.timeSpent} + ${progress.timeSpent}`,
+          isCompleted: sql`CASE WHEN GREATEST(${trainingProgress.progress}, ${progress.progress}) >= 100 THEN true ELSE ${progress.isCompleted} END`,
+          completedAt: sql`CASE WHEN GREATEST(${trainingProgress.progress}, ${progress.progress}) >= 100 AND ${trainingProgress.completedAt} IS NULL THEN NOW() ELSE ${trainingProgress.completedAt} END`,
+          lastAccessed: sql`NOW()`,
+          updatedAt: sql`NOW()`,
+        }
+      })
+      .returning();
+    return newProgress;
+  }
+
+  async updateTrainingProgress(id: string, progress: Partial<TrainingProgress>): Promise<TrainingProgress> {
+    const [updated] = await db.update(trainingProgress).set(progress).where(eq(trainingProgress.id, id)).returning();
+    if (!updated) throw new Error("Training progress not found");
+    return updated;
+  }
+
+  // Standard Operating Procedures
+  async getSOP(id: string): Promise<StandardOperatingProcedure | undefined> {
+    const [sop] = await db.select().from(standardOperatingProcedures).where(eq(standardOperatingProcedures.id, id));
+    return sop || undefined;
+  }
+
+  async getSOPs(filter?: { category?: string; isActive?: boolean }): Promise<StandardOperatingProcedure[]> {
+    const conditions = [];
+    if (filter?.category) {
+      conditions.push(eq(standardOperatingProcedures.category, filter.category));
+    }
+    if (filter?.isActive !== undefined) {
+      conditions.push(eq(standardOperatingProcedures.isActive, filter.isActive));
+    }
+    
+    if (conditions.length > 0) {
+      return db.select().from(standardOperatingProcedures).where(and(...conditions)).orderBy(desc(standardOperatingProcedures.lastUpdated));
+    }
+    
+    return db.select().from(standardOperatingProcedures).orderBy(desc(standardOperatingProcedures.lastUpdated));
+  }
+
+  async createSOP(sop: InsertSOP): Promise<StandardOperatingProcedure> {
+    const [newSOP] = await db.insert(standardOperatingProcedures).values(sop).returning();
+    return newSOP;
+  }
+
+  async updateSOP(id: string, sop: Partial<StandardOperatingProcedure>): Promise<StandardOperatingProcedure> {
+    const [updated] = await db.update(standardOperatingProcedures).set(sop).where(eq(standardOperatingProcedures.id, id)).returning();
+    if (!updated) throw new Error("SOP not found");
+    return updated;
+  }
+
+  async deleteSOP(id: string): Promise<boolean> {
+    const result = await db.delete(standardOperatingProcedures).where(eq(standardOperatingProcedures.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 }
 

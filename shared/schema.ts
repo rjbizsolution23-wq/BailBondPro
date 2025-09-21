@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, decimal, integer, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, decimal, integer, boolean, jsonb, index, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -139,27 +139,36 @@ export const contractTemplates = pgTable("contract_templates", {
   descriptionEs: text("description_es").notNull(),
   content: text("content").notNull(),
   contentEs: text("content_es").notNull(),
-  variables: jsonb("variables").notNull().default('[]'), // Array of variable names like {{CLIENT_NAME}}
+  variables: jsonb("variables").notNull().default(sql`'[]'::jsonb`), // Array of variable names like {{CLIENT_NAME}}
   isActive: boolean("is_active").notNull().default(true),
-  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdBy: varchar("created_by").notNull().references(() => users.id, { onDelete: 'restrict' }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  typeIndex: index().on(table.type),
+  isActiveIndex: index().on(table.isActive),
+  createdByIndex: index().on(table.createdBy),
+}));
 
 export const generatedContracts = pgTable("generated_contracts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  templateId: varchar("template_id").notNull().references(() => contractTemplates.id),
-  clientId: varchar("client_id").notNull().references(() => clients.id),
-  caseId: varchar("case_id").references(() => cases.id),
-  bondId: varchar("bond_id").references(() => bonds.id),
+  templateId: varchar("template_id").notNull().references(() => contractTemplates.id, { onDelete: 'cascade' }),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: 'cascade' }),
+  caseId: varchar("case_id").references(() => cases.id, { onDelete: 'set null' }),
+  bondId: varchar("bond_id").references(() => bonds.id, { onDelete: 'set null' }),
   content: text("content").notNull(),
-  variables: jsonb("variables").notNull().default('{}'), // Key-value pairs of replaced variables
+  variables: jsonb("variables").notNull().default(sql`'{}'::jsonb`), // Key-value pairs of replaced variables
   status: text("status").notNull().default("draft"), // draft, sent, signed, executed
-  generatedBy: varchar("generated_by").notNull().references(() => users.id),
+  generatedBy: varchar("generated_by").notNull().references(() => users.id, { onDelete: 'restrict' }),
   signedAt: timestamp("signed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  templateIdIndex: index().on(table.templateId),
+  clientIdIndex: index().on(table.clientId),
+  statusIndex: index().on(table.status),
+  generatedByIndex: index().on(table.generatedBy),
+}));
 
 export const trainingModules = pgTable("training_modules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -172,16 +181,21 @@ export const trainingModules = pgTable("training_modules", {
   duration: integer("duration").notNull(), // in minutes
   isRequired: boolean("is_required").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
-  content: jsonb("content").notNull().default('[]'), // Array of training sections
-  createdBy: varchar("created_by").notNull().references(() => users.id),
+  content: jsonb("content").notNull().default(sql`'[]'::jsonb`), // Array of training sections
+  createdBy: varchar("created_by").notNull().references(() => users.id, { onDelete: 'restrict' }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  categoryIndex: index().on(table.category),
+  isActiveIndex: index().on(table.isActive),
+  isRequiredIndex: index().on(table.isRequired),
+  createdByIndex: index().on(table.createdBy),
+}));
 
 export const trainingProgress = pgTable("training_progress", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  moduleId: varchar("module_id").notNull().references(() => trainingModules.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  moduleId: varchar("module_id").notNull().references(() => trainingModules.id, { onDelete: 'cascade' }),
   progress: integer("progress").notNull().default(0), // 0-100
   isCompleted: boolean("is_completed").notNull().default(false),
   completedAt: timestamp("completed_at"),
@@ -190,7 +204,12 @@ export const trainingProgress = pgTable("training_progress", {
   lastAccessed: timestamp("last_accessed").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  userModuleUnique: unique().on(table.userId, table.moduleId), // Critical: prevent duplicate progress records
+  userIdIndex: index().on(table.userId),
+  moduleIdIndex: index().on(table.moduleId),
+  isCompletedIndex: index().on(table.isCompleted),
+}));
 
 export const standardOperatingProcedures = pgTable("standard_operating_procedures", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -201,13 +220,17 @@ export const standardOperatingProcedures = pgTable("standard_operating_procedure
   descriptionEs: text("description_es").notNull(),
   content: text("content").notNull(),
   contentEs: text("content_es").notNull(),
-  steps: jsonb("steps").notNull().default('[]'), // Array of SOP steps with details
+  steps: jsonb("steps").notNull().default(sql`'[]'::jsonb`), // Array of SOP steps with details
   version: text("version").notNull().default("1.0"),
   isActive: boolean("is_active").notNull().default(true),
-  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdBy: varchar("created_by").notNull().references(() => users.id, { onDelete: 'restrict' }),
   lastUpdated: timestamp("last_updated").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  categoryIndex: index().on(table.category),
+  isActiveIndex: index().on(table.isActive),
+  createdByIndex: index().on(table.createdBy),
+}));
 
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -270,29 +293,43 @@ export const insertContractTemplateSchema = createInsertSchema(contractTemplates
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  type: z.enum(['bail-agreement', 'indemnity', 'collateral', 'payment-plan', 'power-of-attorney']),
 });
 
 export const insertGeneratedContractSchema = createInsertSchema(generatedContracts).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  status: z.enum(['draft', 'sent', 'signed', 'executed']),
 });
 
 export const insertTrainingModuleSchema = createInsertSchema(trainingModules).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  category: z.enum(['legal-compliance', 'system-usage', 'client-service', 'risk-management', 'operations']),
+  difficulty: z.enum(['beginner', 'intermediate', 'advanced']),
+  duration: z.number().min(1),
 });
 
 export const insertTrainingProgressSchema = createInsertSchema(trainingProgress).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  progress: z.number().min(0).max(100),
+  currentSection: z.number().min(0),
+  timeSpent: z.number().min(0),
 });
 
 export const insertSOPSchema = createInsertSchema(standardOperatingProcedures).omit({
   id: true,
   createdAt: true,
+}).extend({
+  category: z.enum(['client-onboarding', 'bond-processing', 'payment-handling', 'legal-compliance', 'emergency-procedures']),
 });
 
 // Types
