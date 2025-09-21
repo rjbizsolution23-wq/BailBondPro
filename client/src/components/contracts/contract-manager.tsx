@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FileText, Download, Eye, Edit, Plus, Search, Filter } from "lucide-react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,8 +13,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useLanguage } from "@/contexts/language-context";
 import { useToast } from "@/hooks/use-toast";
+import { insertContractTemplateSchema, type InsertContractTemplate } from "@shared/schema";
 
 interface ContractTemplate {
   id: string;
@@ -51,6 +55,23 @@ export function ContractManager() {
   const [typeFilter, setTypeFilter] = useState("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ContractTemplate | null>(null);
+
+  // Form setup for contract template creation
+  const form = useForm<InsertContractTemplate>({
+    resolver: zodResolver(insertContractTemplateSchema),
+    defaultValues: {
+      name: "",
+      nameEs: "",
+      type: "bail-agreement",
+      description: "",
+      descriptionEs: "",
+      content: "",
+      contentEs: "",
+      variables: [],
+      isActive: true,
+      createdBy: "system-user" // Using system user for now
+    }
+  });
 
   // Fetch contract templates from API
   const { data: contractTemplates = [], isLoading: templatesLoading, error: templatesError } = useQuery<ContractTemplate[]>({
