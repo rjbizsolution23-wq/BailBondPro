@@ -22,6 +22,13 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { BondWithDetails } from "@/lib/types";
 
@@ -29,6 +36,8 @@ export default function Bonds() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [selectedBondId, setSelectedBondId] = useState<string | null>(null);
+  const [bondDetailsModalOpen, setBondDetailsModalOpen] = useState(false);
 
   const { data: bonds = [], isLoading } = useQuery<BondWithDetails[]>({
     queryKey: ["/api/bonds/with-details"],
@@ -108,6 +117,21 @@ export default function Bonds() {
       minute: '2-digit',
       hour12: true,
     });
+  };
+
+  const handleViewBondDetails = (bondId: string) => {
+    setSelectedBondId(bondId);
+    setBondDetailsModalOpen(true);
+  };
+
+  const handleEditBond = (bondId: string) => {
+    // TODO: Implement edit functionality
+    console.log('Edit bond:', bondId);
+  };
+
+  const handlePrintBond = (bondId: string) => {
+    // TODO: Implement print functionality
+    window.print();
   };
 
   return (
@@ -334,6 +358,7 @@ export default function Bonds() {
                           <button 
                             className="text-primary hover:text-primary/80" 
                             title="View Details"
+                            onClick={() => handleViewBondDetails(bond.id)}
                             data-testid={`button-view-${bond.id}`}
                           >
                             <i className="fas fa-eye"></i>
@@ -341,6 +366,7 @@ export default function Bonds() {
                           <button 
                             className="text-muted-foreground hover:text-foreground" 
                             title="Edit"
+                            onClick={() => handleEditBond(bond.id)}
                             data-testid={`button-edit-${bond.id}`}
                           >
                             <i className="fas fa-edit"></i>
@@ -348,6 +374,7 @@ export default function Bonds() {
                           <button 
                             className="text-muted-foreground hover:text-foreground" 
                             title="Print"
+                            onClick={() => handlePrintBond(bond.id)}
                             data-testid={`button-print-${bond.id}`}
                           >
                             <i className="fas fa-print"></i>
@@ -409,6 +436,67 @@ export default function Bonds() {
         open={showAddModal}
         onOpenChange={setShowAddModal}
       />
+
+      {/* Bond Details Modal */}
+      <Dialog open={bondDetailsModalOpen} onOpenChange={setBondDetailsModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Bond Details</DialogTitle>
+            <DialogDescription>
+              View detailed information about this bond
+            </DialogDescription>
+          </DialogHeader>
+          {selectedBondId && (() => {
+            const bond = bonds.find(b => b.id === selectedBondId);
+            if (!bond) return <div>Bond not found</div>;
+            
+            return (
+              <div className="space-y-6" data-testid="bond-details-modal">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Bond Number</label>
+                    <p className="text-foreground" data-testid="modal-bond-number">{bond.bondNumber}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Status</label>
+                    <div data-testid="modal-bond-status">{getStatusBadge(bond.status)}</div>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Client Name</label>
+                    <p className="text-foreground" data-testid="modal-client-name">{bond.clientName}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Client Phone</label>
+                    <p className="text-foreground" data-testid="modal-client-phone">{bond.clientPhone}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Bond Amount</label>
+                    <p className="text-foreground" data-testid="modal-bond-amount">{formatCurrency(bond.bondAmount)}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Premium Amount</label>
+                    <p className="text-foreground" data-testid="modal-premium-amount">{formatCurrency(bond.premiumAmount)}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Court Date</label>
+                    <p className="text-foreground" data-testid="modal-court-date">
+                      {bond.courtDate ? `${formatDate(bond.courtDate)} ${formatTime(bond.courtDate)}` : 'Not scheduled'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Payment Status</label>
+                    <div data-testid="modal-payment-status">{getPaymentStatusBadge(bond.paymentStatus)}</div>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Created Date</label>
+                    <p className="text-foreground" data-testid="modal-created-date">{formatDate(bond.createdAt)}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
