@@ -4,7 +4,7 @@ import multer from "multer";
 import path from "path";
 import { promises as fs } from "fs";
 import { storage } from "./storage";
-import { insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema, insertDocumentSchema } from "@shared/schema";
+import { insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema, insertDocumentSchema, insertContractTemplateSchema, insertGeneratedContractSchema, insertTrainingModuleSchema, insertTrainingProgressSchema, insertSOPSchema } from "@shared/schema";
 import { z } from "zod";
 import { aiService } from "./ai-services";
 import jwt from "jsonwebtoken";
@@ -184,9 +184,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/clients/:id", async (req, res) => {
     try {
-      const client = await storage.updateClient(req.params.id, req.body);
+      const partialSchema = insertClientSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const client = await storage.updateClient(req.params.id, validatedData);
       res.json(client);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update client" });
     }
   });
@@ -252,9 +257,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/cases/:id", async (req, res) => {
     try {
-      const case_ = await storage.updateCase(req.params.id, req.body);
+      const partialSchema = insertCaseSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const case_ = await storage.updateCase(req.params.id, validatedData);
       res.json(case_);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update case" });
     }
   });
@@ -329,9 +339,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/bonds/:id", async (req, res) => {
     try {
-      const bond = await storage.updateBond(req.params.id, req.body);
+      const partialSchema = insertBondSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const bond = await storage.updateBond(req.params.id, validatedData);
       res.json(bond);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update bond" });
     }
   });
@@ -487,6 +502,481 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         error: error instanceof Error ? error.message : "Failed to upload documents" 
       });
+    }
+  });
+
+  // CONTRACT MANAGEMENT ROUTES
+  
+  // Contract Template routes
+  app.get("/api/contract-templates", async (req, res) => {
+    try {
+      const { type, isActive } = req.query;
+      const templates = await storage.getContractTemplates({
+        type: type as string,
+        isActive: isActive ? isActive === 'true' : undefined,
+      });
+      res.json(templates);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch contract templates" });
+    }
+  });
+
+  app.get("/api/contract-templates/:id", async (req, res) => {
+    try {
+      const template = await storage.getContractTemplate(req.params.id);
+      if (!template) {
+        return res.status(404).json({ error: "Contract template not found" });
+      }
+      res.json(template);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch contract template" });
+    }
+  });
+
+  app.post("/api/contract-templates", async (req, res) => {
+    try {
+      const validatedData = insertContractTemplateSchema.parse(req.body);
+      const template = await storage.createContractTemplate(validatedData);
+      res.status(201).json(template);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create contract template" });
+    }
+  });
+
+  app.patch("/api/contract-templates/:id", async (req, res) => {
+    try {
+      const partialSchema = insertContractTemplateSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const template = await storage.updateContractTemplate(req.params.id, validatedData);
+      res.json(template);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update contract template" });
+    }
+  });
+
+  app.delete("/api/contract-templates/:id", async (req, res) => {
+    try {
+      await storage.deleteContractTemplate(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete contract template" });
+    }
+  });
+
+  // Generated Contract routes
+  app.get("/api/generated-contracts", async (req, res) => {
+    try {
+      const { clientId, templateId, status } = req.query;
+      const contracts = await storage.getGeneratedContracts({
+        clientId: clientId as string,
+        templateId: templateId as string,
+        status: status as string,
+      });
+      res.json(contracts);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch generated contracts" });
+    }
+  });
+
+  app.get("/api/generated-contracts/:id", async (req, res) => {
+    try {
+      const contract = await storage.getGeneratedContract(req.params.id);
+      if (!contract) {
+        return res.status(404).json({ error: "Generated contract not found" });
+      }
+      res.json(contract);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch generated contract" });
+    }
+  });
+
+  app.post("/api/generated-contracts", async (req, res) => {
+    try {
+      const validatedData = insertGeneratedContractSchema.parse(req.body);
+      const contract = await storage.createGeneratedContract(validatedData);
+      res.status(201).json(contract);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create generated contract" });
+    }
+  });
+
+  app.patch("/api/generated-contracts/:id", async (req, res) => {
+    try {
+      const partialSchema = insertGeneratedContractSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const contract = await storage.updateGeneratedContract(req.params.id, validatedData);
+      res.json(contract);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update generated contract" });
+    }
+  });
+
+  app.delete("/api/generated-contracts/:id", async (req, res) => {
+    try {
+      await storage.deleteGeneratedContract(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete generated contract" });
+    }
+  });
+
+  // Contract generation endpoint
+  app.post("/api/contracts/generate", async (req, res) => {
+    try {
+      const { templateId, clientId, caseId, bondId, variables } = req.body;
+      
+      if (!templateId || !clientId) {
+        return res.status(400).json({ error: "Template ID and Client ID are required" });
+      }
+
+      // Get template and client data
+      const template = await storage.getContractTemplate(templateId);
+      if (!template) {
+        return res.status(404).json({ error: "Contract template not found" });
+      }
+
+      const client = await storage.getClient(clientId);
+      if (!client) {
+        return res.status(404).json({ error: "Client not found" });
+      }
+
+      // Whitelist allowed template variables for security
+      const allowedVariables = [
+        'CLIENT_NAME', 'CLIENT_EMAIL', 'CLIENT_PHONE', 'CLIENT_ADDRESS',
+        'BOND_AMOUNT', 'COURT_DATE', 'CASE_NUMBER', 'PREMIUM_RATE',
+        'COLLATERAL_DESCRIPTION', 'AGENT_NAME', 'COMPANY_NAME', 'DATE_GENERATED'
+      ];
+
+      // Replace variables in template content (no escaping here to avoid double-encoding)
+      let content = template.content;
+      const replacementVariables = variables || {};
+
+      // Add client data to variables (unescaped - escaping happens at download)
+      replacementVariables.CLIENT_NAME = client.firstName + ' ' + client.lastName;
+      replacementVariables.CLIENT_EMAIL = client.email || '';
+      replacementVariables.CLIENT_PHONE = client.phone || '';
+      replacementVariables.CLIENT_ADDRESS = client.address || '';
+      replacementVariables.DATE_GENERATED = new Date().toLocaleDateString();
+
+      // Only process whitelisted variables (unescaped to preserve formatting)
+      for (const [key, value] of Object.entries(replacementVariables)) {
+        if (allowedVariables.includes(key)) {
+          const regex = new RegExp(`{{${key}}}`, 'g');
+          content = content.replace(regex, String(value));
+        }
+      }
+
+      // Create generated contract
+      const contractData = {
+        templateId,
+        clientId,
+        caseId: caseId || null,
+        bondId: bondId || null,
+        content,
+        variables: replacementVariables,
+        status: 'draft' as const,
+        generatedBy: 'system-user', // Replace with actual user ID when auth is implemented
+      };
+
+      const validatedData = insertGeneratedContractSchema.parse(contractData);
+      const contract = await storage.createGeneratedContract(validatedData);
+
+      res.status(201).json(contract);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to generate contract" });
+    }
+  });
+
+  // Contract download endpoint
+  app.get("/api/contracts/:id/download", async (req, res) => {
+    try {
+      const contract = await storage.getGeneratedContract(req.params.id);
+      if (!contract) {
+        return res.status(404).json({ error: "Contract not found" });
+      }
+
+      // Basic HTML sanitization - allow safe formatting tags while preventing XSS
+      const sanitizeHtml = (html: string) => {
+        // Remove script tags and event handlers completely
+        let sanitized = html
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/on\w+\s*=\s*["'][^"']*["']/gi, '')
+          .replace(/javascript:/gi, '')
+          .replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
+          .replace(/<object[^>]*>[\s\S]*?<\/object>/gi, '')
+          .replace(/<embed[^>]*>/gi, '');
+        
+        // Allow safe formatting tags while escaping dangerous content
+        const safeTags = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'div', 'span'];
+        
+        // Preserve line breaks and basic structure
+        return sanitized;
+      };
+
+      const sanitizedContent = sanitizeHtml(contract.content);
+      const escapedId = contract.id.replace(/[<>"'&]/g, '');
+      const escapedStatus = contract.status.replace(/[<>"'&]/g, '');
+
+      // Set proper headers with CSP for security
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="contract_${contract.id}.html"`);
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'self'");
+      
+      res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <title>Contract ${escapedId}</title>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+    .header { border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+    .content { background: #f9f9f9; padding: 20px; border-radius: 4px; line-height: 1.8; }
+    .content p { margin: 10px 0; }
+    .content h1, .content h2, .content h3 { color: #333; margin: 20px 0 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Contract Document</h1>
+    <p>Generated on: ${new Date(contract.createdAt).toLocaleDateString()}</p>
+    <p>Status: ${escapedStatus}</p>
+  </div>
+  <div class="content">${sanitizedContent}</div>
+</body>
+</html>`);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to download contract" });
+    }
+  });
+
+  // TRAINING SYSTEM ROUTES
+  
+  // Training Module routes
+  app.get("/api/training-modules", async (req, res) => {
+    try {
+      const { category, isRequired } = req.query;
+      const modules = await storage.getTrainingModules({
+        category: category as string,
+        isRequired: isRequired ? isRequired === 'true' : undefined,
+      });
+      res.json(modules);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch training modules" });
+    }
+  });
+
+  app.get("/api/training-modules/:id", async (req, res) => {
+    try {
+      const module = await storage.getTrainingModule(req.params.id);
+      if (!module) {
+        return res.status(404).json({ error: "Training module not found" });
+      }
+      res.json(module);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch training module" });
+    }
+  });
+
+  app.post("/api/training-modules", async (req, res) => {
+    try {
+      const validatedData = insertTrainingModuleSchema.parse(req.body);
+      const module = await storage.createTrainingModule(validatedData);
+      res.status(201).json(module);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create training module" });
+    }
+  });
+
+  app.patch("/api/training-modules/:id", async (req, res) => {
+    try {
+      const partialSchema = insertTrainingModuleSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const module = await storage.updateTrainingModule(req.params.id, validatedData);
+      res.json(module);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update training module" });
+    }
+  });
+
+  app.delete("/api/training-modules/:id", async (req, res) => {
+    try {
+      await storage.deleteTrainingModule(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete training module" });
+    }
+  });
+
+  // Training Progress routes
+  app.get("/api/training-progress", async (req, res) => {
+    try {
+      const { userId } = req.query;
+      if (!userId) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+      const progress = await storage.getUserTrainingProgress(userId as string);
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch training progress" });
+    }
+  });
+
+  app.get("/api/training-progress/:userId/:moduleId", async (req, res) => {
+    try {
+      const { userId, moduleId } = req.params;
+      const progress = await storage.getTrainingProgress(userId, moduleId);
+      if (!progress) {
+        return res.status(404).json({ error: "Training progress not found" });
+      }
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch training progress" });
+    }
+  });
+
+  app.post("/api/training-progress", async (req, res) => {
+    try {
+      const validatedData = insertTrainingProgressSchema.parse(req.body);
+      const progress = await storage.createTrainingProgress(validatedData);
+      res.status(201).json(progress);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create training progress" });
+    }
+  });
+
+  app.patch("/api/training-progress/:id", async (req, res) => {
+    try {
+      const partialSchema = insertTrainingProgressSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const progress = await storage.updateTrainingProgress(req.params.id, validatedData);
+      res.json(progress);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update training progress" });
+    }
+  });
+
+  // Training start endpoint
+  app.post("/api/training/start", async (req, res) => {
+    try {
+      const { userId, moduleId } = req.body;
+      
+      if (!userId || !moduleId) {
+        return res.status(400).json({ error: "User ID and Module ID are required" });
+      }
+
+      // Check if module exists
+      const module = await storage.getTrainingModule(moduleId);
+      if (!module) {
+        return res.status(404).json({ error: "Training module not found" });
+      }
+
+      // Create or update progress
+      const progressData = {
+        userId,
+        moduleId,
+        progress: 0,
+        isCompleted: false,
+        currentSection: 0,
+        timeSpent: 0,
+      };
+
+      const validatedData = insertTrainingProgressSchema.parse(progressData);
+      const progress = await storage.createTrainingProgress(validatedData);
+
+      res.status(201).json(progress);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to start training" });
+    }
+  });
+
+  // Standard Operating Procedures routes
+  app.get("/api/sops", async (req, res) => {
+    try {
+      const { category } = req.query;
+      const sops = await storage.getSOPs({
+        category: category as string,
+      });
+      res.json(sops);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch SOPs" });
+    }
+  });
+
+  app.get("/api/sops/:id", async (req, res) => {
+    try {
+      const sop = await storage.getSOP(req.params.id);
+      if (!sop) {
+        return res.status(404).json({ error: "SOP not found" });
+      }
+      res.json(sop);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch SOP" });
+    }
+  });
+
+  app.post("/api/sops", async (req, res) => {
+    try {
+      const validatedData = insertSOPSchema.parse(req.body);
+      const sop = await storage.createSOP(validatedData);
+      res.status(201).json(sop);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create SOP" });
+    }
+  });
+
+  app.patch("/api/sops/:id", async (req, res) => {
+    try {
+      const partialSchema = insertSOPSchema.partial();
+      const validatedData = partialSchema.parse(req.body);
+      const sop = await storage.updateSOP(req.params.id, validatedData);
+      res.json(sop);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update SOP" });
+    }
+  });
+
+  app.delete("/api/sops/:id", async (req, res) => {
+    try {
+      await storage.deleteSOP(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete SOP" });
     }
   });
 

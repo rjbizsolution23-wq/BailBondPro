@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FileText, Download, Eye, Edit, Plus, Search, Filter } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -51,91 +52,38 @@ export function ContractManager() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ContractTemplate | null>(null);
 
-  // Mock data - In production, these would come from your API
-  const contractTemplates: ContractTemplate[] = [
-    {
-      id: "1",
-      name: "Bail Bond Agreement",
-      nameEs: "Acuerdo de Fianza",
-      type: "bail-agreement",
-      description: "Standard bail bond agreement contract",
-      descriptionEs: "Contrato estándar de acuerdo de fianza",
-      content: `BAIL BOND AGREEMENT
+  // Fetch contract templates from API
+  const { data: contractTemplates = [], isLoading: templatesLoading, error: templatesError } = useQuery<ContractTemplate[]>({
+    queryKey: ['/api/contract-templates'],
+  });
 
-This agreement is entered into between \{\{AGENCY_NAME\}\} (the "Surety") and \{\{CLIENT_NAME\}\} (the "Indemnitor") on \{\{DATE\}\}.
-
-TERMS AND CONDITIONS:
-1. Bond Amount: $\{\{BOND_AMOUNT\}\}
-2. Premium: $\{\{PREMIUM_AMOUNT\}\} (\{\{PREMIUM_PERCENTAGE\}\}% of bond amount)
-3. Court Date: \{\{COURT_DATE\}\}
-4. Case Number: \{\{CASE_NUMBER\}\}
-
-OBLIGATIONS:
-- The defendant must appear at all court hearings
-- Premium is fully earned and non-refundable
-- Indemnitor is responsible for all costs if defendant fails to appear
-- GPS monitoring and check-ins may be required
-
-By signing below, all parties agree to the terms stated herein.
-
-Surety: _____________________     Date: ___________
-Indemnitor: _________________     Date: ___________
-Defendant: __________________     Date: ___________`,
-      contentEs: `ACUERDO DE FIANZA
-
-Este acuerdo se celebra entre \{\{AGENCY_NAME\}\} (el "Fiador") y \{\{CLIENT_NAME\}\} (el "Indemnizador") el \{\{DATE\}\}.
-
-TÉRMINOS Y CONDICIONES:
-1. Monto de la Fianza: $\{\{BOND_AMOUNT\}\}
-2. Prima: $\{\{PREMIUM_AMOUNT\}\} (\{\{PREMIUM_PERCENTAGE\}\}% del monto de la fianza)
-3. Fecha de Corte: \{\{COURT_DATE\}\}
-4. Número de Caso: \{\{CASE_NUMBER\}\}
-
-OBLIGACIONES:
-- El acusado debe comparecer a todas las audiencias judiciales
-- La prima se devenga completamente y no es reembolsable
-- El Indemnizador es responsable de todos los costos si el acusado no comparece
-- Puede requerirse monitoreo GPS y registros
-
-Al firmar abajo, todas las partes aceptan los términos establecidos aquí.
-
-Fiador: _____________________     Fecha: ___________
-Indemnizador: _______________     Fecha: ___________
-Acusado: ___________________     Fecha: ___________`,
-      variables: ["AGENCY_NAME", "CLIENT_NAME", "DATE", "BOND_AMOUNT", "PREMIUM_AMOUNT", "PREMIUM_PERCENTAGE", "COURT_DATE", "CASE_NUMBER"],
-      isActive: true,
-      createdAt: "2024-01-01",
-      updatedAt: "2024-01-15"
+  // Download contract mutation
+  const downloadContractMutation = useMutation({
+    mutationFn: async (contractId: string) => {
+      const response = await fetch(`/api/contracts/${contractId}/download`);
+      if (!response.ok) throw new Error('Download failed');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `contract_${contractId}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
     },
-    {
-      id: "2",
-      name: "Indemnity Agreement",
-      nameEs: "Acuerdo de Indemnización",
-      type: "indemnity",
-      description: "Comprehensive indemnity and security agreement",
-      descriptionEs: "Acuerdo integral de indemnización y seguridad",
-      content: `INDEMNITY AND SECURITY AGREEMENT\n\nThe undersigned \{\{INDEMNITOR_NAME\}\} hereby agrees to indemnify and hold harmless \{\{AGENCY_NAME\}\} from any and all losses, costs, damages, and expenses that may be incurred in connection with the bail bond posted for \{\{DEFENDANT_NAME\}\}.\n\nSECURITY PROVISIONS:\n1. Collateral Description: \{\{COLLATERAL_DESCRIPTION\}\}\n2. Estimated Value: $\{\{COLLATERAL_VALUE\}\}\n3. Location: \{\{COLLATERAL_LOCATION\}\}\n\nINDEMNIFICATION:\nIndemnitor agrees to pay all costs including but not limited to:\n- Bail bond forfeiture\n- Attorney fees\n- Investigation costs\n- Recovery expenses\n- Court costs and fees\n\nThis agreement shall remain in effect until the bail bond is exonerated or discharged.\n\nIndemnitor: ____________________     Date: ___________\nWitness: ______________________     Date: ___________`,
-      contentEs: `ACUERDO DE INDEMNIZACIÓN Y SEGURIDAD\n\nEl suscrito \{\{INDEMNITOR_NAME\}\} por la presente acepta indemnizar y eximir de responsabilidad a \{\{AGENCY_NAME\}\} de todas las pérdidas, costos, daños y gastos que puedan incurrirse en relación con la fianza otorgada para \{\{DEFENDANT_NAME\}\}.\n\nPROVISIONES DE SEGURIDAD:\n1. Descripción de Garantía: \{\{COLLATERAL_DESCRIPTION\}\}\n2. Valor Estimado: $\{\{COLLATERAL_VALUE\}\}\n3. Ubicación: \{\{COLLATERAL_LOCATION\}\}\n\nINDEMNIZACIÓN:\nEl Indemnizador acepta pagar todos los costos incluyendo pero no limitado a:\n- Pérdida de fianza\n- Honorarios de abogado\n- Costos de investigación\n- Gastos de recuperación\n- Costos y honorarios judiciales\n\nEste acuerdo permanecerá en vigencia hasta que la fianza sea exonerada o liberada.\n\nIndemnizador: ________________     Fecha: ___________\nTestigo: ____________________     Fecha: ___________`,
-      variables: ["INDEMNITOR_NAME", "AGENCY_NAME", "DEFENDANT_NAME", "COLLATERAL_DESCRIPTION", "COLLATERAL_VALUE", "COLLATERAL_LOCATION"],
-      isActive: true,
-      createdAt: "2024-01-01",
-      updatedAt: "2024-01-10"
+    onSuccess: () => {
+      toast({
+        title: language === 'es' ? 'Descarga exitosa' : 'Download successful',
+        description: language === 'es' ? 'El contrato se ha descargado correctamente' : 'Contract downloaded successfully',
+      });
     },
-    {
-      id: "3",
-      name: "Payment Plan Agreement",
-      nameEs: "Acuerdo de Plan de Pago",
-      type: "payment-plan",
-      description: "Structured payment plan for premium and fees",
-      descriptionEs: "Plan de pago estructurado para prima y honorarios",
-      content: `PAYMENT PLAN AGREEMENT\n\nClient: \{\{CLIENT_NAME\}\}\nCase: \{\{CASE_NUMBER\}\}\nTotal Amount Due: $\{\{TOTAL_AMOUNT\}\}\n\nPAYMENT SCHEDULE:\nDown Payment: $\{\{DOWN_PAYMENT\}\} - Due: \{\{DOWN_PAYMENT_DATE\}\}\n\{\{#INSTALLMENTS\}\}\nPayment \{\{INSTALLMENT_NUMBER\}\}: $\{\{INSTALLMENT_AMOUNT\}\} - Due: \{\{INSTALLMENT_DATE\}\}\n\{\{/INSTALLMENTS\}\}\n\nTERMS:\n- Late fee of $\{\{LATE_FEE\}\} applies for payments more than \{\{GRACE_DAYS\}\} days late\n- Default occurs after \{\{DEFAULT_DAYS\}\} days of non-payment\n- Upon default, full balance becomes immediately due\n- Client remains responsible for all court appearances regardless of payment status\n\nClient Signature: ________________     Date: ___________\nAgency Representative: ___________     Date: ___________`,
-      contentEs: `ACUERDO DE PLAN DE PAGO\n\nCliente: \{\{CLIENT_NAME\}\}\nCaso: \{\{CASE_NUMBER\}\}\nMonto Total Adeudado: $\{\{TOTAL_AMOUNT\}\}\n\nCRONOGRAMA DE PAGOS:\nPago Inicial: $\{\{DOWN_PAYMENT\}\} - Vence: \{\{DOWN_PAYMENT_DATE\}\}\n\{\{#INSTALLMENTS\}\}\nPago \{\{INSTALLMENT_NUMBER\}\}: $\{\{INSTALLMENT_AMOUNT\}\} - Vence: \{\{INSTALLMENT_DATE\}\}\n\{\{/INSTALLMENTS\}\}\n\nTÉRMINOS:\n- Se aplica un recargo por mora de $\{\{LATE_FEE\}\} para pagos con más de \{\{GRACE_DAYS\}\} días de retraso\n- El incumplimiento ocurre después de \{\{DEFAULT_DAYS\}\} días de falta de pago\n- Al incumplir, el saldo total vence inmediatamente\n- El cliente sigue siendo responsable de todas las comparecencias judiciales independientemente del estado de pago\n\nFirma del Cliente: ______________     Fecha: ___________\nRepresentante de la Agencia: ____     Fecha: ___________`,
-      variables: ["CLIENT_NAME", "CASE_NUMBER", "TOTAL_AMOUNT", "DOWN_PAYMENT", "DOWN_PAYMENT_DATE", "LATE_FEE", "GRACE_DAYS", "DEFAULT_DAYS"],
-      isActive: true,
-      createdAt: "2024-01-05",
-      updatedAt: "2024-01-20"
+    onError: () => {
+      toast({
+        variant: "destructive",
+        title: language === 'es' ? 'Error de descarga' : 'Download error',
+        description: language === 'es' ? 'No se pudo descargar el contrato' : 'Failed to download contract',
+      });
     }
-  ];
+  });
 
   const filteredTemplates = contractTemplates.filter(template => {
     const matchesSearch = !searchTerm || 
@@ -237,19 +185,39 @@ Acusado: ___________________     Fecha: ___________`,
             </Select>
           </div>
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{language === 'es' ? 'Nombre' : 'Name'}</TableHead>
-                <TableHead>{language === 'es' ? 'Tipo' : 'Type'}</TableHead>
-                <TableHead>{language === 'es' ? 'Descripción' : 'Description'}</TableHead>
-                <TableHead>{language === 'es' ? 'Variables' : 'Variables'}</TableHead>
-                <TableHead>{language === 'es' ? 'Estado' : 'Status'}</TableHead>
-                <TableHead>{language === 'es' ? 'Acciones' : 'Actions'}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredTemplates.map((template) => (
+          {templatesLoading ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-muted-foreground">
+                {language === 'es' ? 'Cargando plantillas...' : 'Loading templates...'}
+              </div>
+            </div>
+          ) : templatesError ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-destructive">
+                {language === 'es' ? 'Error al cargar las plantillas' : 'Error loading templates'}
+              </div>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{language === 'es' ? 'Nombre' : 'Name'}</TableHead>
+                  <TableHead>{language === 'es' ? 'Tipo' : 'Type'}</TableHead>
+                  <TableHead>{language === 'es' ? 'Descripción' : 'Description'}</TableHead>
+                  <TableHead>{language === 'es' ? 'Variables' : 'Variables'}</TableHead>
+                  <TableHead>{language === 'es' ? 'Estado' : 'Status'}</TableHead>
+                  <TableHead>{language === 'es' ? 'Acciones' : 'Actions'}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredTemplates.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      {language === 'es' ? 'No se encontraron plantillas' : 'No templates found'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredTemplates.map((template) => (
                 <TableRow key={template.id}>
                   <TableCell className="font-medium">
                     {language === 'es' ? template.nameEs : template.name}
@@ -279,23 +247,209 @@ Acusado: ___________________     Fecha: ___________`,
                         variant="ghost"
                         size="sm"
                         onClick={() => setSelectedTemplate(template)}
+                        data-testid={`button-preview-${template.id}`}
                       >
                         <Eye className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="sm">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        data-testid={`button-edit-${template.id}`}
+                        onClick={() => {
+                          toast({
+                            title: language === 'es' ? 'Próximamente' : 'Coming Soon',
+                            description: language === 'es' ? 'La edición de plantillas estará disponible pronto' : 'Template editing will be available soon',
+                          });
+                        }}
+                      >
                         <Edit className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="sm">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        data-testid={`button-download-${template.id}`}
+                        onClick={() => {
+                          toast({
+                            title: language === 'es' ? 'Generar primero' : 'Generate First',
+                            description: language === 'es' ? 'Primero genera un contrato para descargarlo' : 'Generate a contract first to download it',
+                          });
+                        }}
+                      >
                         <Download className="h-4 w-4" />
                       </Button>
                     </div>
                   </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
+
+      {/* Create Template Dialog */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {language === 'es' ? 'Crear Nueva Plantilla' : 'Create New Template'}
+            </DialogTitle>
+            <DialogDescription>
+              {language === 'es' 
+                ? 'Cree una nueva plantilla de contrato para usar en documentos legales'
+                : 'Create a new contract template to use in legal documents'
+              }
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="template-name">
+                  {language === 'es' ? 'Nombre (Inglés)' : 'Name (English)'}
+                </Label>
+                <Input
+                  id="template-name"
+                  placeholder={language === 'es' ? 'Ej: Acuerdo de Fianza' : 'e.g., Bail Agreement'}
+                  data-testid="input-template-name"
+                />
+              </div>
+              <div>
+                <Label htmlFor="template-name-es">
+                  {language === 'es' ? 'Nombre (Español)' : 'Name (Spanish)'}
+                </Label>
+                <Input
+                  id="template-name-es"
+                  placeholder={language === 'es' ? 'Ej: Bail Agreement' : 'e.g., Acuerdo de Fianza'}
+                  data-testid="input-template-name-es"
+                />
+              </div>
+            </div>
+            
+            <div>
+              <Label htmlFor="template-type">
+                {language === 'es' ? 'Tipo de Contrato' : 'Contract Type'}
+              </Label>
+              <Select>
+                <SelectTrigger data-testid="select-template-type">
+                  <SelectValue placeholder={language === 'es' ? 'Seleccionar tipo' : 'Select type'} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bail-agreement">
+                    {language === 'es' ? 'Acuerdo de Fianza' : 'Bail Agreement'}
+                  </SelectItem>
+                  <SelectItem value="indemnity">
+                    {language === 'es' ? 'Indemnización' : 'Indemnity'}
+                  </SelectItem>
+                  <SelectItem value="collateral">
+                    {language === 'es' ? 'Garantía' : 'Collateral'}
+                  </SelectItem>
+                  <SelectItem value="payment-plan">
+                    {language === 'es' ? 'Plan de Pago' : 'Payment Plan'}
+                  </SelectItem>
+                  <SelectItem value="power-of-attorney">
+                    {language === 'es' ? 'Poder Legal' : 'Power of Attorney'}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="template-description">
+                  {language === 'es' ? 'Descripción (Inglés)' : 'Description (English)'}
+                </Label>
+                <Textarea
+                  id="template-description"
+                  placeholder={language === 'es' ? 'Describa el propósito de esta plantilla...' : 'Describe the purpose of this template...'}
+                  data-testid="textarea-template-description"
+                />
+              </div>
+              <div>
+                <Label htmlFor="template-description-es">
+                  {language === 'es' ? 'Descripción (Español)' : 'Description (Spanish)'}
+                </Label>
+                <Textarea
+                  id="template-description-es"
+                  placeholder={language === 'es' ? 'Describe the purpose of this template...' : 'Describa el propósito de esta plantilla...'}
+                  data-testid="textarea-template-description-es"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="template-content">
+                  {language === 'es' ? 'Contenido (Inglés)' : 'Content (English)'}
+                </Label>
+                <Textarea
+                  id="template-content"
+                  rows={6}
+                  placeholder={language === 'es' 
+                    ? 'Ingrese el contenido del contrato en inglés...' 
+                    : 'Enter the contract content in English...'}
+                  data-testid="textarea-template-content"
+                />
+              </div>
+              <div>
+                <Label htmlFor="template-content-es">
+                  {language === 'es' ? 'Contenido (Español)' : 'Content (Spanish)'}
+                </Label>
+                <Textarea
+                  id="template-content-es"
+                  rows={6}
+                  placeholder={language === 'es' 
+                    ? 'Enter the contract content in Spanish...' 
+                    : 'Ingrese el contenido del contrato en español...'}
+                  data-testid="textarea-template-content-es"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="template-variables">
+                {language === 'es' ? 'Variables (separadas por coma)' : 'Variables (comma-separated)'}
+              </Label>
+              <Input
+                id="template-variables"
+                placeholder={language === 'es' 
+                  ? 'clientName, bondAmount, courtDate' 
+                  : 'clientName, bondAmount, courtDate'}
+                data-testid="input-template-variables"
+              />
+              <p className="text-sm text-muted-foreground mt-1">
+                {language === 'es' 
+                  ? 'Las variables se usarán como {{clientName}}, {{bondAmount}}, etc.'
+                  : 'Variables will be used as {{clientName}}, {{bondAmount}}, etc.'}
+              </p>
+            </div>
+
+            <div className="flex justify-end space-x-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowCreateDialog(false)}
+                data-testid="button-cancel-template"
+              >
+                {language === 'es' ? 'Cancelar' : 'Cancel'}
+              </Button>
+              <Button 
+                data-testid="button-save-template"
+                onClick={() => {
+                  toast({
+                    title: language === 'es' ? 'Próximamente' : 'Coming Soon',
+                    description: language === 'es' 
+                      ? 'La creación de plantillas estará disponible pronto' 
+                      : 'Template creation will be available soon',
+                  });
+                  setShowCreateDialog(false);
+                }}
+              >
+                {language === 'es' ? 'Crear Plantilla' : 'Create Template'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Template Preview Dialog */}
       <Dialog open={!!selectedTemplate} onOpenChange={() => setSelectedTemplate(null)}>
