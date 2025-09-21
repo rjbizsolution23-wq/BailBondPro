@@ -6,34 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { User } from "@shared/schema";
 
 export default function Settings() {
   const [activeCategory, setActiveCategory] = useState("users");
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
 
-  // Mock user data since we don't have a users endpoint
-  const users = [
-    {
-      id: "1",
-      firstName: "John",
-      lastName: "Smith", 
-      email: "john.smith@bailbonds.com",
-      role: "admin",
-    },
-    {
-      id: "2",
-      firstName: "Emily",
-      lastName: "Martinez",
-      email: "emily.martinez@bailbonds.com", 
-      role: "agent",
-    },
-    {
-      id: "3",
-      firstName: "Michael",
-      lastName: "Johnson",
-      email: "michael.johnson@bailbonds.com",
-      role: "staff",
-    },
-  ];
+  // Fetch real user data from API
+  const { data: users = [], isLoading } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+    queryFn: () => api.getUsers(),
+  });
 
   const settingsCategories = [
     { id: "users", icon: "fas fa-users", label: "User Management" },
@@ -65,7 +48,7 @@ export default function Settings() {
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>User Management</CardTitle>
-          <Button data-testid="button-add-user">
+          <Button data-testid="button-add-user" onClick={() => setShowAddUserModal(true)}>
             <i className="fas fa-plus mr-2"></i>Add User
           </Button>
         </div>

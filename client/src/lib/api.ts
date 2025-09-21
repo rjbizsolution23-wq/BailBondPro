@@ -34,6 +34,17 @@ export const api = {
   deleteClient: (id: string) =>
     apiRequest("DELETE", `/api/clients/${id}`),
 
+  // Users
+  getUsers: (filters?: { role?: string; isActive?: boolean }) => {
+    const params = new URLSearchParams();
+    if (filters?.role) params.append("role", filters.role);
+    if (filters?.isActive !== undefined) params.append("isActive", filters.isActive.toString());
+    return fetch(`/api/users${params.toString() ? `?${params}` : ""}`).then(res => res.json());
+  },
+
+  createUser: (data: any) =>
+    apiRequest("POST", "/api/users", data).then(res => res.json()),
+
   // Cases
   getCases: (filters?: { clientId?: string; status?: string }) => {
     const params = new URLSearchParams();

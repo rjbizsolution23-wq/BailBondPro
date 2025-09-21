@@ -4,7 +4,7 @@ import multer from "multer";
 import path from "path";
 import { promises as fs } from "fs";
 import { storage } from "./storage";
-import { insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema, insertDocumentSchema, insertContractTemplateSchema, insertGeneratedContractSchema, insertTrainingModuleSchema, insertTrainingProgressSchema, insertSOPSchema } from "@shared/schema";
+import { insertUserSchema, insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema, insertDocumentSchema, insertContractTemplateSchema, insertGeneratedContractSchema, insertTrainingModuleSchema, insertTrainingProgressSchema, insertSOPSchema } from "@shared/schema";
 import { z } from "zod";
 import { aiService } from "./ai-services";
 import jwt from "jsonwebtoken";
@@ -120,6 +120,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(courtDates);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch upcoming court dates" });
+    }
+  });
+
+  // User routes
+  app.get("/api/users", async (req, res) => {
+    try {
+      const { role, isActive } = req.query;
+      const users = await storage.getUsers({
+        role: role as string,
+        isActive: isActive === 'true' ? true : isActive === 'false' ? false : undefined,
+      });
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch users" });
+    }
+  });
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const validatedData = insertUserSchema.parse(req.body);
+      const user = await storage.createUser(validatedData);
+      res.status(201).json(user);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create user" });
     }
   });
 
