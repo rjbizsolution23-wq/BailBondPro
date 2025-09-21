@@ -130,6 +130,85 @@ export const clientCheckins = pgTable("client_checkins", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const contractTemplates = pgTable("contract_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  nameEs: text("name_es").notNull(),
+  type: text("type").notNull(), // bail-agreement, indemnity, collateral, payment-plan, power-of-attorney
+  description: text("description").notNull(),
+  descriptionEs: text("description_es").notNull(),
+  content: text("content").notNull(),
+  contentEs: text("content_es").notNull(),
+  variables: jsonb("variables").notNull().default('[]'), // Array of variable names like {{CLIENT_NAME}}
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const generatedContracts = pgTable("generated_contracts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  templateId: varchar("template_id").notNull().references(() => contractTemplates.id),
+  clientId: varchar("client_id").notNull().references(() => clients.id),
+  caseId: varchar("case_id").references(() => cases.id),
+  bondId: varchar("bond_id").references(() => bonds.id),
+  content: text("content").notNull(),
+  variables: jsonb("variables").notNull().default('{}'), // Key-value pairs of replaced variables
+  status: text("status").notNull().default("draft"), // draft, sent, signed, executed
+  generatedBy: varchar("generated_by").notNull().references(() => users.id),
+  signedAt: timestamp("signed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const trainingModules = pgTable("training_modules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  titleEs: text("title_es").notNull(),
+  description: text("description").notNull(),
+  descriptionEs: text("description_es").notNull(),
+  category: text("category").notNull(), // legal-compliance, system-usage, client-service, risk-management, operations
+  difficulty: text("difficulty").notNull(), // beginner, intermediate, advanced
+  duration: integer("duration").notNull(), // in minutes
+  isRequired: boolean("is_required").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  content: jsonb("content").notNull().default('[]'), // Array of training sections
+  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const trainingProgress = pgTable("training_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  moduleId: varchar("module_id").notNull().references(() => trainingModules.id),
+  progress: integer("progress").notNull().default(0), // 0-100
+  isCompleted: boolean("is_completed").notNull().default(false),
+  completedAt: timestamp("completed_at"),
+  currentSection: integer("current_section").notNull().default(0),
+  timeSpent: integer("time_spent").notNull().default(0), // in minutes
+  lastAccessed: timestamp("last_accessed").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const standardOperatingProcedures = pgTable("standard_operating_procedures", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  titleEs: text("title_es").notNull(),
+  category: text("category").notNull(), // client-onboarding, bond-processing, payment-handling, legal-compliance, emergency-procedures
+  description: text("description").notNull(),
+  descriptionEs: text("description_es").notNull(),
+  content: text("content").notNull(),
+  contentEs: text("content_es").notNull(),
+  steps: jsonb("steps").notNull().default('[]'), // Array of SOP steps with details
+  version: text("version").notNull().default("1.0"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: varchar("created_by").notNull().references(() => users.id),
+  lastUpdated: timestamp("last_updated").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -187,6 +266,35 @@ export const insertClientCheckinSchema = createInsertSchema(clientCheckins).omit
   longitude: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional(),
 });
 
+export const insertContractTemplateSchema = createInsertSchema(contractTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertGeneratedContractSchema = createInsertSchema(generatedContracts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertTrainingModuleSchema = createInsertSchema(trainingModules).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertTrainingProgressSchema = createInsertSchema(trainingProgress).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSOPSchema = createInsertSchema(standardOperatingProcedures).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -211,6 +319,21 @@ export type InsertActivity = z.infer<typeof insertActivitySchema>;
 
 export type ClientCheckin = typeof clientCheckins.$inferSelect;
 export type InsertClientCheckin = z.infer<typeof insertClientCheckinSchema>;
+
+export type ContractTemplate = typeof contractTemplates.$inferSelect;
+export type InsertContractTemplate = z.infer<typeof insertContractTemplateSchema>;
+
+export type GeneratedContract = typeof generatedContracts.$inferSelect;
+export type InsertGeneratedContract = z.infer<typeof insertGeneratedContractSchema>;
+
+export type TrainingModule = typeof trainingModules.$inferSelect;
+export type InsertTrainingModule = z.infer<typeof insertTrainingModuleSchema>;
+
+export type TrainingProgress = typeof trainingProgress.$inferSelect;
+export type InsertTrainingProgress = z.infer<typeof insertTrainingProgressSchema>;
+
+export type StandardOperatingProcedure = typeof standardOperatingProcedures.$inferSelect;
+export type InsertSOP = z.infer<typeof insertSOPSchema>;
 
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
