@@ -28,6 +28,7 @@ import { FinancialSummary } from "@/lib/types";
 export default function Financial() {
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("");
+  const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false);
 
   const { data: financialSummary, isLoading: summaryLoading } = useQuery<FinancialSummary>({
     queryKey: ["/api/financial/summary"],
@@ -93,6 +94,15 @@ export default function Financial() {
     }
   };
 
+  const handleRecordPayment = () => {
+    setShowRecordPaymentModal(true);
+  };
+
+  const handleExportReport = () => {
+    // TODO: Implement export functionality
+    console.log('Export report clicked');
+  };
+
   return (
     <div className="flex-1 overflow-hidden">
       <Header
@@ -108,10 +118,10 @@ export default function Financial() {
             <p className="text-muted-foreground">Track payments, fees, and financial reporting</p>
           </div>
           <div className="flex space-x-3">
-            <Button variant="secondary" data-testid="button-export-report">
+            <Button variant="secondary" onClick={handleExportReport} data-testid="button-export-report">
               <i className="fas fa-download mr-2"></i>Export Report
             </Button>
-            <Button data-testid="button-record-payment">
+            <Button onClick={handleRecordPayment} data-testid="button-record-payment">
               <i className="fas fa-plus mr-2"></i>Record Payment
             </Button>
           </div>
