@@ -78,6 +78,36 @@ export function ContractManager() {
     queryKey: ['/api/contract-templates'],
   });
 
+  // Create template mutation
+  const createTemplateMutation = useMutation({
+    mutationFn: async (data: InsertContractTemplate) => {
+      // Parse variables from comma-separated string to array
+      const formData = {
+        ...data,
+        variables: typeof data.variables === 'string' 
+          ? data.variables.split(',').map(v => v.trim()).filter(v => v) 
+          : data.variables
+      };
+      return apiRequest('POST', '/api/contract-templates', formData);
+    },
+    onSuccess: () => {
+      toast({
+        title: language === 'es' ? 'Plantilla creada' : 'Template created',
+        description: language === 'es' ? 'La plantilla se ha creado exitosamente' : 'Template created successfully',
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/contract-templates'] });
+      setShowCreateDialog(false);
+      form.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: language === 'es' ? 'Error al crear plantilla' : 'Error creating template',
+        description: error?.message || (language === 'es' ? 'No se pudo crear la plantilla' : 'Failed to create template'),
+      });
+    }
+  });
+
   // Download contract mutation
   const downloadContractMutation = useMutation({
     mutationFn: async (contractId: string) => {
@@ -105,6 +135,11 @@ export function ContractManager() {
       });
     }
   });
+
+  // Form submission handler
+  const onSubmit = (data: InsertContractTemplate) => {
+    createTemplateMutation.mutate(data);
+  };
 
   const filteredTemplates = contractTemplates.filter(template => {
     const matchesSearch = !searchTerm || 
@@ -311,7 +346,7 @@ export function ContractManager() {
 
       {/* Create Template Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {language === 'es' ? 'Crear Nueva Plantilla' : 'Create New Template'}
@@ -323,152 +358,228 @@ export function ContractManager() {
               }
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="template-name">
-                  {language === 'es' ? 'Nombre (Inglés)' : 'Name (English)'}
-                </Label>
-                <Input
-                  id="template-name"
-                  placeholder={language === 'es' ? 'Ej: Acuerdo de Fianza' : 'e.g., Bail Agreement'}
-                  data-testid="input-template-name"
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {language === 'es' ? 'Nombre (Inglés)' : 'Name (English)'}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder={language === 'es' ? 'Ej: Bail Agreement' : 'e.g., Bail Agreement'}
+                          data-testid="input-template-name"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="nameEs"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {language === 'es' ? 'Nombre (Español)' : 'Name (Spanish)'}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder={language === 'es' ? 'Ej: Acuerdo de Fianza' : 'e.g., Acuerdo de Fianza'}
+                          data-testid="input-template-name-es"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
               </div>
-              <div>
-                <Label htmlFor="template-name-es">
-                  {language === 'es' ? 'Nombre (Español)' : 'Name (Spanish)'}
-                </Label>
-                <Input
-                  id="template-name-es"
-                  placeholder={language === 'es' ? 'Ej: Bail Agreement' : 'e.g., Acuerdo de Fianza'}
-                  data-testid="input-template-name-es"
-                />
-              </div>
-            </div>
-            
-            <div>
-              <Label htmlFor="template-type">
-                {language === 'es' ? 'Tipo de Contrato' : 'Contract Type'}
-              </Label>
-              <Select>
-                <SelectTrigger data-testid="select-template-type">
-                  <SelectValue placeholder={language === 'es' ? 'Seleccionar tipo' : 'Select type'} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bail-agreement">
-                    {language === 'es' ? 'Acuerdo de Fianza' : 'Bail Agreement'}
-                  </SelectItem>
-                  <SelectItem value="indemnity">
-                    {language === 'es' ? 'Indemnización' : 'Indemnity'}
-                  </SelectItem>
-                  <SelectItem value="collateral">
-                    {language === 'es' ? 'Garantía' : 'Collateral'}
-                  </SelectItem>
-                  <SelectItem value="payment-plan">
-                    {language === 'es' ? 'Plan de Pago' : 'Payment Plan'}
-                  </SelectItem>
-                  <SelectItem value="power-of-attorney">
-                    {language === 'es' ? 'Poder Legal' : 'Power of Attorney'}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="template-description">
-                  {language === 'es' ? 'Descripción (Inglés)' : 'Description (English)'}
-                </Label>
-                <Textarea
-                  id="template-description"
-                  placeholder={language === 'es' ? 'Describa el propósito de esta plantilla...' : 'Describe the purpose of this template...'}
-                  data-testid="textarea-template-description"
-                />
-              </div>
-              <div>
-                <Label htmlFor="template-description-es">
-                  {language === 'es' ? 'Descripción (Español)' : 'Description (Spanish)'}
-                </Label>
-                <Textarea
-                  id="template-description-es"
-                  placeholder={language === 'es' ? 'Describe the purpose of this template...' : 'Describa el propósito de esta plantilla...'}
-                  data-testid="textarea-template-description-es"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="template-content">
-                  {language === 'es' ? 'Contenido (Inglés)' : 'Content (English)'}
-                </Label>
-                <Textarea
-                  id="template-content"
-                  rows={6}
-                  placeholder={language === 'es' 
-                    ? 'Ingrese el contenido del contrato en inglés...' 
-                    : 'Enter the contract content in English...'}
-                  data-testid="textarea-template-content"
-                />
-              </div>
-              <div>
-                <Label htmlFor="template-content-es">
-                  {language === 'es' ? 'Contenido (Español)' : 'Content (Spanish)'}
-                </Label>
-                <Textarea
-                  id="template-content-es"
-                  rows={6}
-                  placeholder={language === 'es' 
-                    ? 'Enter the contract content in Spanish...' 
-                    : 'Ingrese el contenido del contrato en español...'}
-                  data-testid="textarea-template-content-es"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label htmlFor="template-variables">
-                {language === 'es' ? 'Variables (separadas por coma)' : 'Variables (comma-separated)'}
-              </Label>
-              <Input
-                id="template-variables"
-                placeholder={language === 'es' 
-                  ? 'clientName, bondAmount, courtDate' 
-                  : 'clientName, bondAmount, courtDate'}
-                data-testid="input-template-variables"
+              
+              <FormField
+                control={form.control}
+                name="type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {language === 'es' ? 'Tipo de Contrato' : 'Contract Type'}
+                    </FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-template-type">
+                          <SelectValue placeholder={language === 'es' ? 'Seleccionar tipo' : 'Select type'} />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="bail-agreement">
+                          {language === 'es' ? 'Acuerdo de Fianza' : 'Bail Agreement'}
+                        </SelectItem>
+                        <SelectItem value="indemnity">
+                          {language === 'es' ? 'Indemnización' : 'Indemnity'}
+                        </SelectItem>
+                        <SelectItem value="collateral">
+                          {language === 'es' ? 'Garantía' : 'Collateral'}
+                        </SelectItem>
+                        <SelectItem value="payment-plan">
+                          {language === 'es' ? 'Plan de Pago' : 'Payment Plan'}
+                        </SelectItem>
+                        <SelectItem value="power-of-attorney">
+                          {language === 'es' ? 'Poder Legal' : 'Power of Attorney'}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-              <p className="text-sm text-muted-foreground mt-1">
-                {language === 'es' 
-                  ? 'Las variables se usarán como {{clientName}}, {{bondAmount}}, etc.'
-                  : 'Variables will be used as {{clientName}}, {{bondAmount}}, etc.'}
-              </p>
-            </div>
 
-            <div className="flex justify-end space-x-2">
-              <Button 
-                variant="outline" 
-                onClick={() => setShowCreateDialog(false)}
-                data-testid="button-cancel-template"
-              >
-                {language === 'es' ? 'Cancelar' : 'Cancel'}
-              </Button>
-              <Button 
-                data-testid="button-save-template"
-                onClick={() => {
-                  toast({
-                    title: language === 'es' ? 'Próximamente' : 'Coming Soon',
-                    description: language === 'es' 
-                      ? 'La creación de plantillas estará disponible pronto' 
-                      : 'Template creation will be available soon',
-                  });
-                  setShowCreateDialog(false);
-                }}
-              >
-                {language === 'es' ? 'Crear Plantilla' : 'Create Template'}
-              </Button>
-            </div>
-          </div>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {language === 'es' ? 'Descripción (Inglés)' : 'Description (English)'}
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder={language === 'es' ? 'Describe the purpose of this template...' : 'Describe the purpose of this template...'}
+                          data-testid="textarea-template-description"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="descriptionEs"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {language === 'es' ? 'Descripción (Español)' : 'Description (Spanish)'}
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder={language === 'es' ? 'Describa el propósito de esta plantilla...' : 'Describa el propósito de esta plantilla...'}
+                          data-testid="textarea-template-description-es"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="content"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {language === 'es' ? 'Contenido (Inglés)' : 'Content (English)'}
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={6}
+                          placeholder={language === 'es' 
+                            ? 'Enter the contract content in English...' 
+                            : 'Enter the contract content in English...'}
+                          data-testid="textarea-template-content"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="contentEs"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {language === 'es' ? 'Contenido (Español)' : 'Content (Spanish)'}
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={6}
+                          placeholder={language === 'es' 
+                            ? 'Ingrese el contenido del contrato en español...' 
+                            : 'Ingrese el contenido del contrato en español...'}
+                          data-testid="textarea-template-content-es"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="variables"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {language === 'es' ? 'Variables (separadas por coma)' : 'Variables (comma-separated)'}
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder={language === 'es' 
+                          ? 'clientName, bondAmount, courtDate' 
+                          : 'clientName, bondAmount, courtDate'}
+                        data-testid="input-template-variables"
+                        {...field}
+                        value={Array.isArray(field.value) ? field.value.join(', ') : String(field.value || '')}
+                        onChange={(e) => field.onChange(e.target.value)}
+                      />
+                    </FormControl>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'es' 
+                        ? 'Las variables se usarán como {{clientName}}, {{bondAmount}}, etc.'
+                        : 'Variables will be used as {{clientName}}, {{bondAmount}}, etc.'}
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="flex justify-end space-x-2">
+                <Button 
+                  type="button"
+                  variant="outline" 
+                  onClick={() => {
+                    setShowCreateDialog(false);
+                    form.reset();
+                  }}
+                  data-testid="button-cancel-template"
+                >
+                  {language === 'es' ? 'Cancelar' : 'Cancel'}
+                </Button>
+                <Button 
+                  type="submit"
+                  disabled={createTemplateMutation.isPending}
+                  data-testid="button-save-template"
+                >
+                  {createTemplateMutation.isPending 
+                    ? (language === 'es' ? 'Creando...' : 'Creating...') 
+                    : (language === 'es' ? 'Crear Plantilla' : 'Create Template')
+                  }
+                </Button>
+              </div>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
 
