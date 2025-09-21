@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { ClientWithBonds } from "@/lib/types";
+import { Eye, Edit3, MoreHorizontal } from "lucide-react";
 
 export default function Clients() {
   const [, setLocation] = useLocation();
@@ -198,9 +199,13 @@ export default function Clients() {
                             </span>
                           </div>
                           <div>
-                            <div className="text-sm font-medium text-foreground" data-testid={`client-name-${client.id}`}>
+                            <button 
+                              className="text-sm font-medium text-foreground hover:text-primary cursor-pointer text-left" 
+                              data-testid={`client-name-${client.id}`}
+                              onClick={() => setLocation(`/clients/${client.id}`)}
+                            >
                               {client.firstName} {client.lastName}
-                            </div>
+                            </button>
                             <div className="text-sm text-muted-foreground">
                               Client since {formatDate(client.createdAt)}
                             </div>
@@ -228,28 +233,31 @@ export default function Clients() {
                       </TableCell>
                       <TableCell>
                         <div className="flex space-x-2">
-                          <button 
-                            className="text-primary hover:text-primary/80" 
+                          <Button 
+                            variant="ghost"
+                            size="sm"
                             title="View Details"
                             data-testid={`button-view-${client.id}`}
                             onClick={() => setLocation(`/clients/${client.id}`)}
                           >
-                            <i className="fas fa-eye"></i>
-                          </button>
-                          <button 
-                            className="text-muted-foreground hover:text-foreground" 
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost"
+                            size="sm"
                             title="Edit"
                             data-testid={`button-edit-${client.id}`}
                           >
-                            <i className="fas fa-edit"></i>
-                          </button>
-                          <button 
-                            className="text-muted-foreground hover:text-foreground" 
+                            <Edit3 className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost"
+                            size="sm"
                             title="More Options"
                             data-testid={`button-options-${client.id}`}
                           >
-                            <i className="fas fa-ellipsis-v"></i>
-                          </button>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
