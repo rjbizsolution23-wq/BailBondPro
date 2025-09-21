@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { BookOpen, PlayCircle, CheckCircle, Award, Clock, Star, FileText, Video, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -66,8 +67,16 @@ export function TrainingSystem() {
   const { t, language } = useLanguage();
   const [activeTab, setActiveTab] = useState("training");
   const [selectedModule, setSelectedModule] = useState<TrainingModule | null>(null);
-  const [trainingModules, setTrainingModules] = useState<TrainingModule[]>([]);
-  const [sops, setSops] = useState<SOP[]>([]);
+
+  // Fetch training modules from API
+  const { data: trainingModules = [], isLoading: modulesLoading, error: modulesError } = useQuery<TrainingModule[]>({
+    queryKey: ['/api/training-modules'],
+  });
+
+  // Fetch SOPs from API  
+  const { data: sops = [], isLoading: sopsLoading, error: sopsError } = useQuery<SOP[]>({
+    queryKey: ['/api/sops'],
+  });
 
   // Mock training data
   const mockTrainingModules: TrainingModule[] = [
@@ -396,10 +405,6 @@ Todos los pasos iniciales deben completarse dentro de 24 horas de la notificaciÃ
     }
   ];
 
-  useEffect(() => {
-    setTrainingModules(mockTrainingModules);
-    setSops(mockSOPs);
-  }, []);
 
   const getCategoryLabel = (category: string) => {
     const labels = {
