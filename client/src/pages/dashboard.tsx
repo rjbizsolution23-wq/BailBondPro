@@ -236,28 +236,31 @@ export default function Dashboard() {
               <CardTitle>Upcoming Court Dates</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {courtDatesLoading ? (
                   Array.from({ length: 3 }).map((_, i) => (
                     <Skeleton key={i} className="h-16 w-full rounded-lg" />
                   ))
                 ) : courtDates.length > 0 ? (
-                  courtDates.map((courtDate) => (
+                  courtDates.map((courtDate, index) => (
                     <div
                       key={courtDate.id}
-                      className="flex items-center justify-between p-3 bg-secondary rounded-lg"
+                      className={`flex items-center justify-between p-4 bg-secondary/10 border border-border rounded-lg mb-3 ${
+                        index !== courtDates.length - 1 ? 'border-b' : ''
+                      }`}
                       data-testid={`court-date-${courtDate.id}`}
+                      style={{ marginBottom: index !== courtDates.length - 1 ? '12px' : '0' }}
                     >
-                      <div>
-                        <p className="text-sm font-medium text-foreground">
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-foreground mb-1">
                           {courtDate.firstName} {courtDate.lastName}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Case #{courtDate.caseNumber}
                         </p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-medium text-foreground">
+                      <div className="text-right flex-shrink-0 ml-4">
+                        <p className="text-sm font-semibold text-foreground mb-1">
                           {formatDate(courtDate.courtDate)}
                         </p>
                         <p className="text-xs text-muted-foreground">
