@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Header } from "@/components/layout/header";
 import { AddClientModal } from "@/components/modals/add-client-modal";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,6 +27,7 @@ import { api } from "@/lib/api";
 import { ClientWithBonds } from "@/lib/types";
 
 export default function Clients() {
+  const [, setLocation] = useLocation();
   const [showAddModal, setShowAddModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -230,6 +232,7 @@ export default function Clients() {
                             className="text-primary hover:text-primary/80" 
                             title="View Details"
                             data-testid={`button-view-${client.id}`}
+                            onClick={() => setLocation(`/clients/${client.id}`)}
                           >
                             <i className="fas fa-eye"></i>
                           </button>

@@ -7,6 +7,7 @@ import { LanguageProvider } from "@/contexts/language-context";
 import { Sidebar } from "@/components/layout/sidebar";
 import Dashboard from "@/pages/dashboard";
 import Clients from "@/pages/clients";
+import ClientDetail from "@/pages/client";
 import Cases from "@/pages/cases";
 import Bonds from "@/pages/bonds";
 import Financial from "@/pages/financial";
@@ -32,6 +33,7 @@ function Router() {
           <Switch>
             <Route path="/" component={Dashboard} />
             <Route path="/clients" component={Clients} />
+            <Route path="/clients/:id" component={ClientDetail} />
             <Route path="/cases" component={Cases} />
             <Route path="/bonds" component={Bonds} />
             <Route path="/financial" component={Financial} />
