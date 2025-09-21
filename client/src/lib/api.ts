@@ -45,6 +45,12 @@ export const api = {
   createUser: (data: any) =>
     apiRequest("POST", "/api/users", data).then(res => res.json()),
 
+  updateUser: (id: string, data: any) =>
+    apiRequest("PATCH", `/api/users/${id}`, data).then(res => res.json()),
+
+  deleteUser: (id: string) =>
+    apiRequest("DELETE", `/api/users/${id}`),
+
   // Cases
   getCases: (filters?: { clientId?: string; status?: string }) => {
     const params = new URLSearchParams();

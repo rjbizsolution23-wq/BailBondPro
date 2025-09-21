@@ -19,6 +19,7 @@ export function Sidebar({ currentUser = { firstName: "John", lastName: "Smith", 
     { path: "/financial", icon: "fas fa-dollar-sign", label: "Financial Management" },
     { path: "/documents", icon: "fas fa-file-alt", label: "Document Management" },
     { path: "/reports", icon: "fas fa-chart-bar", label: "Reports & Analytics" },
+    { path: "/agents", icon: "fas fa-user-shield", label: "Agents & Staff" },
     { path: "/onboarding", icon: "fas fa-graduation-cap", label: "Training & Setup" },
     { path: "/settings", icon: "fas fa-cog", label: "Settings" },
   ];
