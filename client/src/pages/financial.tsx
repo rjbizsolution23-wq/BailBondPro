@@ -21,9 +21,30 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { RevenueChart } from "@/components/charts/revenue-chart";
 import { api } from "@/lib/api";
 import { FinancialSummary } from "@/lib/types";
+import { insertPaymentSchema, InsertPayment } from "@shared/schema";
 
 export default function Financial() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -94,6 +115,55 @@ export default function Financial() {
     }
   };
 
+  const { toast } = useToast();
+  
+  // Get clients and bonds for dropdowns
+  const { data: clients = [] } = useQuery({
+    queryKey: ["/api/clients"],
+    queryFn: () => api.getClients(),
+  });
+
+  const { data: bonds = [] } = useQuery({
+    queryKey: ["/api/bonds"],
+    queryFn: () => api.getBonds(),
+  });
+
+  const form = useForm<InsertPayment>({
+    resolver: zodResolver(insertPaymentSchema),
+    defaultValues: {
+      transactionId: `TXN-${Date.now()}`,
+      bondId: "",
+      clientId: "",
+      amount: "",
+      paymentType: "premium",
+      paymentMethod: "cash",
+      status: "completed",
+      paymentDate: new Date().toISOString().split('T')[0],
+      notes: "",
+    },
+  });
+
+  const createPaymentMutation = useMutation({
+    mutationFn: (data: InsertPayment) => api.createPayment(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/financial/summary"] });
+      toast({
+        title: "Payment Recorded",
+        description: "Payment has been successfully recorded.",
+      });
+      setShowRecordPaymentModal(false);
+      form.reset();
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "Failed to record payment. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleRecordPayment = () => {
     setShowRecordPaymentModal(true);
   };
@@ -101,6 +171,10 @@ export default function Financial() {
   const handleExportReport = () => {
     // TODO: Implement export functionality
     console.log('Export report clicked');
+  };
+
+  const onSubmitPayment = (data: InsertPayment) => {
+    createPaymentMutation.mutate(data);
   };
 
   return (
@@ -354,6 +428,198 @@ export default function Financial() {
           )}
         </Card>
       </div>
+
+      {/* Record Payment Modal */}
+      <Dialog open={showRecordPaymentModal} onOpenChange={setShowRecordPaymentModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Record Payment</DialogTitle>
+            <DialogDescription>
+              Record a new payment transaction
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmitPayment)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="transactionId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Transaction ID</FormLabel>
+                    <FormControl>
+                      <Input {...field} data-testid="input-transaction-id" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="clientId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Client</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-client">
+                          <SelectValue placeholder="Select client" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {clients.map((client: any) => (
+                          <SelectItem key={client.id} value={client.id}>
+                            {client.firstName} {client.lastName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="bondId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Bond</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-bond">
+                          <SelectValue placeholder="Select bond" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {bonds.map((bond: any) => (
+                          <SelectItem key={bond.id} value={bond.id}>
+                            {bond.bondNumber}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="amount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Amount</FormLabel>
+                    <FormControl>
+                      <Input 
+                        {...field} 
+                        type="number" 
+                        step="0.01" 
+                        placeholder="0.00"
+                        data-testid="input-amount"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="paymentType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment Type</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-payment-type">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="premium">Premium Payment</SelectItem>
+                        <SelectItem value="collateral_return">Collateral Return</SelectItem>
+                        <SelectItem value="fee">Fee</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="paymentMethod"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment Method</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-payment-method">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="check">Check</SelectItem>
+                        <SelectItem value="credit_card">Credit Card</SelectItem>
+                        <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="paymentDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment Date</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="date" data-testid="input-payment-date" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes (Optional)</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Additional notes..." data-testid="input-notes" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="flex justify-end space-x-3 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowRecordPaymentModal(false)}
+                  data-testid="button-cancel-payment"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={createPaymentMutation.isPending}
+                  data-testid="button-submit-payment"
+                >
+                  {createPaymentMutation.isPending ? "Recording..." : "Record Payment"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
