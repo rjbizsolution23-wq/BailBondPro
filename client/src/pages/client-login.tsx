@@ -41,19 +41,20 @@ export default function ClientLoginPage() {
     },
     onSuccess: (data) => {
       toast({
-        title: t("loginSuccessful"),
-        description: t("welcomeBackClient"),
+        title: t("clientPortal.loginSuccessful"),
+        description: t("clientPortal.welcomeBackClient"),
       });
-      // Store client data in localStorage
+      // Store client data and auth token in localStorage
       localStorage.setItem("clientData", JSON.stringify(data.client));
+      localStorage.setItem("clientToken", data.token);
       // Redirect to client dashboard
       setLocation(`/client-portal/${data.client.id}`);
     },
     onError: (error: any) => {
       console.error("Login error:", error);
       toast({
-        title: t("loginFailed"),
-        description: error.message || t("invalidCredentials"),
+        title: t("clientPortal.loginFailed"),
+        description: error.message || t("clientPortal.invalidCredentials"),
         variant: "destructive",
       });
     },

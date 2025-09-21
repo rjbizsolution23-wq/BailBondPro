@@ -14,25 +14,36 @@ import Documents from "@/pages/documents";
 import Reports from "@/pages/reports";
 import Settings from "@/pages/settings";
 import { OnboardingPage } from "@/pages/onboarding";
+import ClientLoginPage from "@/pages/client-login";
+import ClientPortalPage from "@/pages/client-portal";
 import NotFound from "@/pages/not-found";
 
 function Router() {
   return (
-    <div className="flex h-screen bg-background">
-      <Sidebar />
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/clients" component={Clients} />
-        <Route path="/cases" component={Cases} />
-        <Route path="/bonds" component={Bonds} />
-        <Route path="/financial" component={Financial} />
-        <Route path="/documents" component={Documents} />
-        <Route path="/reports" component={Reports} />
-        <Route path="/settings" component={Settings} />
-        <Route path="/onboarding" component={OnboardingPage} />
-        <Route component={NotFound} />
-      </Switch>
-    </div>
+    <Switch>
+      {/* Client Portal Routes (no sidebar) */}
+      <Route path="/client-login" component={ClientLoginPage} />
+      <Route path="/client-portal/:clientId" component={ClientPortalPage} />
+      
+      {/* Main Application Routes (with sidebar) */}
+      <Route path="/" nest>
+        <div className="flex h-screen bg-background">
+          <Sidebar />
+          <Switch>
+            <Route path="/" component={Dashboard} />
+            <Route path="/clients" component={Clients} />
+            <Route path="/cases" component={Cases} />
+            <Route path="/bonds" component={Bonds} />
+            <Route path="/financial" component={Financial} />
+            <Route path="/documents" component={Documents} />
+            <Route path="/reports" component={Reports} />
+            <Route path="/settings" component={Settings} />
+            <Route path="/onboarding" component={OnboardingPage} />
+            <Route component={NotFound} />
+          </Switch>
+        </div>
+      </Route>
+    </Switch>
   );
 }
 

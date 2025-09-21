@@ -7,8 +7,25 @@ import { storage } from "./storage";
 import { insertClientSchema, insertCaseSchema, insertBondSchema, insertPaymentSchema, insertDocumentSchema } from "@shared/schema";
 import { z } from "zod";
 import { aiService } from "./ai-services";
+import jwt from "jsonwebtoken";
+import rateLimit from "express-rate-limit";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  
+  // Validate JWT secret at startup - fail fast for production security
+  const JWT_SECRET = process.env.SESSION_SECRET;
+  if (!JWT_SECRET || JWT_SECRET === 'fallback-secret-for-dev') {
+    throw new Error('SESSION_SECRET environment variable must be set for production security');
+  }
+  
+  // Rate limiting for login endpoint
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit to 5 attempts per IP per window
+    message: { error: 'Too many login attempts. Please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
   
   // Configure multer for file uploads
   const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -53,6 +70,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cb(null, true);
       } else {
         cb(new Error(`Invalid file type: ${file.mimetype}. Only PDF, images, Word documents, and text files are allowed.`));
+      }
+    }
+  });
+  
+  // Image-only multer for photo check-ins (security hardening)
+  const photoUpload = multer({
+    storage: multerStorage,
+    limits: {
+      fileSize: 5 * 1024 * 1024, // 5MB limit for photos
+      files: 1 // Only one photo per check-in
+    },
+    fileFilter: (req, file, cb) => {
+      // Only allow image types for photo check-ins
+      const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+      
+      if (imageTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only image files (JPEG, PNG, GIF, WebP) are allowed for photo check-ins.'));
       }
     }
   });
@@ -588,7 +624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // CLIENT PORTAL API ROUTES
   
   // Client Portal Authentication
-  app.post("/api/client/login", async (req, res) => {
+  app.post("/api/client/login", loginLimiter, async (req, res) => {
     try {
       const { username, password } = req.body;
       
@@ -605,11 +641,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update last check-in time
       await storage.updateClientLastCheckin(client.id);
 
-      // Return client data without password
+      // Generate secure JWT token with proper secret validation
+      const JWT_SECRET = process.env.SESSION_SECRET;
+      if (!JWT_SECRET || JWT_SECRET === 'fallback-secret-for-dev') {
+        throw new Error('SESSION_SECRET environment variable must be set for production security');
+      }
+      
+      const token = jwt.sign(
+        { 
+          clientId: client.id,
+          portalEnabled: client.portalEnabled,
+          iss: 'bailbond-pro',
+          aud: 'client-portal'
+        },
+        JWT_SECRET,
+        { 
+          algorithm: 'HS256',
+          expiresIn: '24h'
+        }
+      );
+
+      // Return client data without password and include secure JWT token
       const { portalPassword, ...clientData } = client;
       res.json({ 
         success: true, 
         client: clientData,
+        token: token,
         message: "Login successful" 
       });
     } catch (error) {
@@ -646,8 +703,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Client authentication middleware with JWT verification
+  const authenticateClient = async (req: any, res: any, next: any) => {
+    try {
+      const { clientId } = req.params;
+      const authHeader = req.headers.authorization;
+      
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+      
+      // Verify JWT token with algorithm specification
+      const JWT_SECRET = process.env.SESSION_SECRET;
+      if (!JWT_SECRET) {
+        return res.status(500).json({ error: "Server configuration error" });
+      }
+      
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET, {
+          algorithms: ['HS256'],
+          issuer: 'bailbond-pro',
+          audience: 'client-portal'
+        });
+      } catch (jwtError) {
+        return res.status(401).json({ error: "Invalid or expired token" });
+      }
+      
+      // Verify client ID matches token and client is authorized
+      if (decoded.clientId !== clientId || !decoded.portalEnabled) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      // Get client data for additional verification
+      const client = await storage.getClient(decoded.clientId);
+      if (!client || !client.portalEnabled) {
+        return res.status(403).json({ error: "Client not found or portal disabled" });
+      }
+      
+      req.authenticatedClient = client;
+      next();
+    } catch (error) {
+      console.error('Authentication error:', error);
+      return res.status(401).json({ error: "Authentication failed" });
+    }
+  };
+
   // Client Dashboard Data
-  app.get("/api/client/:clientId/dashboard", async (req, res) => {
+  app.get("/api/client/:clientId/dashboard", authenticateClient, async (req: any, res) => {
     try {
       const { clientId } = req.params;
       
@@ -687,13 +792,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Client Photo Check-in
-  app.post("/api/client/:clientId/checkin", upload.single('photo'), async (req, res) => {
+  app.post("/api/client/:clientId/checkin", authenticateClient, photoUpload.single('photo'), async (req: any, res) => {
     try {
       const { clientId } = req.params;
       const { bondId, latitude, longitude, locationName, notes } = req.body;
       
       if (!bondId) {
         return res.status(400).json({ error: "Bond ID is required" });
+      }
+
+      // Verify bond belongs to authenticated client
+      const bond = await storage.getBond(bondId);
+      if (!bond) {
+        return res.status(404).json({ error: "Bond not found" });
+      }
+
+      // Get case associated with bond and verify ownership
+      const bondCase = await storage.getCase(bond.caseId);
+      if (!bondCase || bondCase.clientId !== clientId) {
+        return res.status(403).json({ error: "Access denied - bond does not belong to client" });
       }
 
       let photoUrl = null;
@@ -731,7 +848,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get client check-in history
-  app.get("/api/client/:clientId/checkins", async (req, res) => {
+  app.get("/api/client/:clientId/checkins", authenticateClient, async (req: any, res) => {
     try {
       const { clientId } = req.params;
       const { bondId } = req.query;
@@ -752,7 +869,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get client bonds
-  app.get("/api/client/:clientId/bonds", async (req, res) => {
+  app.get("/api/client/:clientId/bonds", authenticateClient, async (req: any, res) => {
     try {
       const { clientId } = req.params;
       const bonds = await storage.getClientBonds(clientId);
@@ -766,7 +883,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get client cases
-  app.get("/api/client/:clientId/cases", async (req, res) => {
+  app.get("/api/client/:clientId/cases", authenticateClient, async (req: any, res) => {
     try {
       const { clientId } = req.params;
       const cases = await storage.getClientCases(clientId);
@@ -780,7 +897,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get client court dates
-  app.get("/api/client/:clientId/court-dates", async (req, res) => {
+  app.get("/api/client/:clientId/court-dates", authenticateClient, async (req: any, res) => {
     try {
       const { clientId } = req.params;
       const courtDates = await storage.getClientUpcomingCourtDates(clientId);

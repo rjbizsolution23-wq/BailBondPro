@@ -12,6 +12,7 @@ import {
 import { db } from "./db";
 import { eq, desc, like, and, or, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import bcrypt from "bcrypt";
 
 export interface IStorage {
   // Users
@@ -566,11 +567,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async enableClientPortal(clientId: string, username: string, password: string): Promise<Client> {
+    // Hash password with bcrypt before storing
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    
     const [updatedClient] = await db
       .update(clients)
       .set({ 
         portalUsername: username, 
-        portalPassword: password, 
+        portalPassword: hashedPassword, 
         portalEnabled: true 
       })
       .where(eq(clients.id, clientId))
@@ -580,15 +585,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   async authenticateClient(username: string, password: string): Promise<Client | null> {
+    // Get client by username first
     const [client] = await db
       .select()
       .from(clients)
       .where(and(
         eq(clients.portalUsername, username),
-        eq(clients.portalPassword, password),
         eq(clients.portalEnabled, true)
       ));
-    return client || null;
+    
+    if (!client || !client.portalPassword) {
+      return null;
+    }
+    
+    // Use bcrypt to securely compare password
+    const isPasswordValid = await bcrypt.compare(password, client.portalPassword);
+    return isPasswordValid ? client : null;
   }
 
   async updateClientLastCheckin(clientId: string): Promise<Client> {
