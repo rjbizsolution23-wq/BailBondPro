@@ -161,7 +161,7 @@ jobs:
           pnpm outdated --json > outdated-report.json || true
 
       - name: 📤 Upload Quality Reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: quality-reports
           path: |
@@ -332,7 +332,7 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
 
       - name: 📊 Upload Integration Test Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: integration-test-results
@@ -372,7 +372,7 @@ jobs:
         run: npx playwright test
 
       - name: 📊 Upload E2E Test Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: e2e-test-results
@@ -411,7 +411,7 @@ jobs:
         run: npm run analyze:bundle
 
       - name: 📦 Upload Build Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
           path: |
@@ -530,7 +530,7 @@ jobs:
           BASE_URL: http://localhost:3000
 
       - name: 📊 Upload Performance Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: lighthouse-results
           path: .lighthouseci/
@@ -841,7 +841,7 @@ jobs:
           echo "- Deployment successful" >> deployment-report.md
 
       - name: 📤 Upload Deployment Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deployment-report
           path: deployment-report.md
