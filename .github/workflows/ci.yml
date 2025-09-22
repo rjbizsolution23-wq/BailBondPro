@@ -896,7 +896,7 @@ jobs:
     if: always()
     steps:
       - name: 🧹 Clean up artifacts
-        uses: geekyeggo/delete-artifact@v2
+        uses: geekyeggo/delete-artifact@v5
         with:
           name: |
             build-artifacts
