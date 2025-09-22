@@ -6,7 +6,7 @@
 # ============================================================================
 # Stage 1: Base Dependencies
 # ============================================================================
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 LABEL maintainer="Rick Jefferson <support@rjbizsolution.com>"
 LABEL description="BailBondPro - Professional Bail Bond Management System"
 LABEL version="1.0.0"
@@ -88,7 +88,7 @@ RUN echo "Server build: $(ls -la server/dist 2>/dev/null | wc -l) files" >> /app
 # ============================================================================
 # Stage 4: Production Runtime
 # ============================================================================
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 
 # Security: Install security updates and runtime dependencies
 RUN apk update && apk upgrade && apk add --no-cache \
