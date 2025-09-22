@@ -81,7 +81,7 @@ jobs:
       scan_compliance: ${{ steps.determine.outputs.scan_compliance }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -170,7 +170,7 @@ jobs:
       high_count: ${{ steps.summary.outputs.high_count }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
@@ -287,7 +287,7 @@ jobs:
       critical_issues: ${{ steps.summary.outputs.critical_issues }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -453,7 +453,7 @@ jobs:
       high_confidence_secrets: ${{ steps.summary.outputs.high_confidence_secrets }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -593,7 +593,7 @@ jobs:
     
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
@@ -640,7 +640,7 @@ jobs:
       critical_vulnerabilities: ${{ steps.summary.outputs.critical_vulnerabilities }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔧 Setup Docker Buildx
         if: matrix.scanner != 'checkov'
@@ -803,7 +803,7 @@ jobs:
     
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔍 Checkov IaC Scan
         uses: bridgecrewio/checkov-action@master
@@ -848,7 +848,7 @@ jobs:
           - 3000:3000
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
@@ -1043,7 +1043,7 @@ jobs:
       critical_threats: ${{ steps.summary.outputs.critical_threats }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -1247,7 +1247,7 @@ jobs:
       critical_violations: ${{ steps.summary.outputs.critical_violations }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -1544,7 +1544,7 @@ jobs:
       total_vulnerabilities: ${{ steps.security-evaluation.outputs.total_vulnerabilities }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 📊 Comprehensive Security Evaluation
         id: security-evaluation
@@ -1910,7 +1910,7 @@ jobs:
       report_url: ${{ steps.report-generation.outputs.report_url }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔧 Setup Node.js
         uses: actions/setup-node@v4
@@ -2485,7 +2485,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔔 Slack Security Alert
         if: needs.security-monitoring.outputs.security_status == 'critical' || needs.security-monitoring.outputs.security_status == 'high'

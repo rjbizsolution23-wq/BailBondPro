@@ -70,7 +70,7 @@ jobs:
     
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🆔 Generate Backup ID
         id: generate_id
@@ -164,7 +164,7 @@ jobs:
     
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔧 Setup PostgreSQL Client
         run: |
@@ -288,7 +288,7 @@ jobs:
     
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 📁 Create Application Files Backup
         id: files_backup
@@ -371,7 +371,7 @@ jobs:
     
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ⚙️ Create Configuration Backup
         id: config_backup

@@ -72,7 +72,7 @@ jobs:
       deployment_strategy: ${{ steps.validation.outputs.deployment_strategy }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -199,7 +199,7 @@ jobs:
       build_artifacts: ${{ steps.build.outputs.artifacts }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
@@ -330,7 +330,7 @@ jobs:
       backup_created: ${{ steps.backup.outputs.backup_id }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
@@ -530,7 +530,7 @@ jobs:
     environment: ${{ needs.pre-deployment.outputs.deployment_env }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 📥 Download Build Artifacts
         uses: actions/download-artifact@v4
@@ -573,7 +573,7 @@ jobs:
     environment: ${{ needs.pre-deployment.outputs.deployment_env }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 📥 Download Build Artifacts
         uses: actions/download-artifact@v4
@@ -598,7 +598,7 @@ jobs:
     if: always() && needs.deploy-vercel.result == 'success'
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ⏳ Wait for Deployment
         run: |
