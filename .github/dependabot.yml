@@ -1,0 +1,343 @@
+# ============================================================================
+# Dependabot Configuration for BailBondPro
+# Automated dependency updates and security vulnerability management
+# ============================================================================
+
+version: 2
+
+updates:
+  # ============================================================================
+  # NPM Dependencies (Frontend & Backend)
+  # ============================================================================
+  
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    
+    # Update strategy
+    versioning-strategy: "increase"
+    
+    # Pull request configuration
+    open-pull-requests-limit: 10
+    pull-request-branch-name:
+      separator: "/"
+    
+    # Commit message configuration
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    
+    # Reviewers and assignees
+    reviewers:
+      - "kalivibecoding"
+    assignees:
+      - "kalivibecoding"
+    
+    # Labels
+    labels:
+      - "dependencies"
+      - "automated"
+    
+    # Ignore specific dependencies
+    ignore:
+      # Ignore major version updates for these packages
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    
+    # Allow specific dependencies to be updated more frequently
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    
+    # Group related updates
+    groups:
+      react-ecosystem:
+        patterns:
+          - "react*"
+          - "@types/react*"
+        update-types:
+          - "minor"
+          - "patch"
+      
+      testing-framework:
+        patterns:
+          - "jest*"
+          - "@testing-library/*"
+          - "vitest*"
+        update-types:
+          - "minor"
+          - "patch"
+      
+      build-tools:
+        patterns:
+          - "vite*"
+          - "webpack*"
+          - "rollup*"
+          - "@vitejs/*"
+        update-types:
+          - "minor"
+          - "patch"
+      
+      linting-formatting:
+        patterns:
+          - "eslint*"
+          - "prettier*"
+          - "@typescript-eslint/*"
+        update-types:
+          - "minor"
+          - "patch"
+      
+      ui-components:
+        patterns:
+          - "@radix-ui/*"
+          - "framer-motion"
+          - "tailwindcss"
+          - "@headlessui/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ============================================================================
+  # Docker Dependencies
+  # ============================================================================
+  
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:00"
+      timezone: "America/New_York"
+    
+    # Pull request configuration
+    open-pull-requests-limit: 5
+    pull-request-branch-name:
+      separator: "/"
+    
+    # Commit message configuration
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    
+    # Reviewers and assignees
+    reviewers:
+      - "kalivibecoding"
+    assignees:
+      - "kalivibecoding"
+    
+    # Labels
+    labels:
+      - "docker"
+      - "infrastructure"
+      - "automated"
+
+  # ============================================================================
+  # GitHub Actions Dependencies
+  # ============================================================================
+  
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "11:00"
+      timezone: "America/New_York"
+    
+    # Pull request configuration
+    open-pull-requests-limit: 5
+    pull-request-branch-name:
+      separator: "/"
+    
+    # Commit message configuration
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    
+    # Reviewers and assignees
+    reviewers:
+      - "kalivibecoding"
+    assignees:
+      - "kalivibecoding"
+    
+    # Labels
+    labels:
+      - "github-actions"
+      - "ci-cd"
+      - "automated"
+    
+    # Group related GitHub Actions
+    groups:
+      setup-actions:
+        patterns:
+          - "actions/checkout"
+          - "actions/setup-node"
+          - "actions/setup-python"
+          - "actions/cache"
+        update-types:
+          - "minor"
+          - "patch"
+      
+      deployment-actions:
+        patterns:
+          - "actions/deploy-pages"
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ============================================================================
+  # Terraform Dependencies (if using Infrastructure as Code)
+  # ============================================================================
+  
+  - package-ecosystem: "terraform"
+    directory: "/infrastructure"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+      time: "12:00"
+      timezone: "America/New_York"
+    
+    # Pull request configuration
+    open-pull-requests-limit: 3
+    pull-request-branch-name:
+      separator: "/"
+    
+    # Commit message configuration
+    commit-message:
+      prefix: "terraform"
+      include: "scope"
+    
+    # Reviewers and assignees
+    reviewers:
+      - "kalivibecoding"
+    assignees:
+      - "kalivibecoding"
+    
+    # Labels
+    labels:
+      - "terraform"
+      - "infrastructure"
+      - "automated"
+
+  # ============================================================================
+  # Composer Dependencies (if using PHP components)
+  # ============================================================================
+  
+  - package-ecosystem: "composer"
+    directory: "/api/php"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "13:00"
+      timezone: "America/New_York"
+    
+    # Pull request configuration
+    open-pull-requests-limit: 5
+    pull-request-branch-name:
+      separator: "/"
+    
+    # Commit message configuration
+    commit-message:
+      prefix: "php-deps"
+      include: "scope"
+    
+    # Reviewers and assignees
+    reviewers:
+      - "kalivibecoding"
+    assignees:
+      - "kalivibecoding"
+    
+    # Labels
+    labels:
+      - "php"
+      - "dependencies"
+      - "automated"
+
+  # ============================================================================
+  # Python Dependencies (if using Python services)
+  # ============================================================================
+  
+  - package-ecosystem: "pip"
+    directory: "/scripts/python"
+    schedule:
+      interval: "weekly"
+      day: "saturday"
+      time: "14:00"
+      timezone: "America/New_York"
+    
+    # Pull request configuration
+    open-pull-requests-limit: 5
+    pull-request-branch-name:
+      separator: "/"
+    
+    # Commit message configuration
+    commit-message:
+      prefix: "python-deps"
+      include: "scope"
+    
+    # Reviewers and assignees
+    reviewers:
+      - "kalivibecoding"
+    assignees:
+      - "kalivibecoding"
+    
+    # Labels
+    labels:
+      - "python"
+      - "dependencies"
+      - "automated"
+
+# ============================================================================
+# Security and Vulnerability Management
+# ============================================================================
+
+# Dependabot will automatically:
+# 1. Create security updates for vulnerable dependencies
+# 2. Open pull requests for security patches
+# 3. Provide detailed vulnerability information
+# 4. Suggest compatible version updates
+
+# Additional security features:
+# - Automatic security updates are enabled by default
+# - Vulnerability alerts are sent to repository administrators
+# - Security advisories are monitored continuously
+# - Critical vulnerabilities trigger immediate updates
+
+# ============================================================================
+# Best Practices Implemented
+# ============================================================================
+
+# 1. Staggered scheduling to avoid overwhelming the team
+# 2. Grouped updates for related packages
+# 3. Appropriate limits on open pull requests
+# 4. Clear labeling and assignment system
+# 5. Semantic commit message formatting
+# 6. Strategic ignoring of major version updates for critical packages
+# 7. Comprehensive coverage of all package ecosystems in use
+
+# ============================================================================
+# Integration with CI/CD Pipeline
+# ============================================================================
+
+# Dependabot PRs will automatically trigger:
+# - Full CI/CD pipeline execution
+# - Security scanning
+# - Performance testing
+# - Integration testing
+# - Automated deployment to staging (if tests pass)
+
+# Manual review required for:
+# - Major version updates
+# - Breaking changes
+# - Security-critical updates
+# - Infrastructure changes

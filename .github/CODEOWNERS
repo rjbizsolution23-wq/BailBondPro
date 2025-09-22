@@ -1,0 +1,237 @@
+# ============================================================================
+# CODEOWNERS - Code Ownership and Review Assignment
+# This file defines who owns different parts of the codebase and automatically
+# assigns reviewers for pull requests affecting those areas.
+# ============================================================================
+
+# ============================================================================
+# Global Ownership
+# ============================================================================
+
+# Default owners for everything in the repository
+# These users will be requested for review when someone opens a pull request
+* @kalivibecoding
+
+# ============================================================================
+# Core Application Code
+# ============================================================================
+
+# Frontend React Components
+/src/components/ @kalivibecoding
+/src/pages/ @kalivibecoding
+/src/hooks/ @kalivibecoding
+/src/contexts/ @kalivibecoding
+/src/utils/ @kalivibecoding
+
+# Backend API and Services
+/src/api/ @kalivibecoding
+/src/services/ @kalivibecoding
+/src/middleware/ @kalivibecoding
+/src/controllers/ @kalivibecoding
+/src/models/ @kalivibecoding
+
+# Database and Migrations
+/src/database/ @kalivibecoding
+/migrations/ @kalivibecoding
+/seeds/ @kalivibecoding
+/prisma/ @kalivibecoding
+
+# Authentication and Security
+/src/auth/ @kalivibecoding
+/src/security/ @kalivibecoding
+/src/middleware/auth.ts @kalivibecoding
+/src/middleware/security.ts @kalivibecoding
+
+# ============================================================================
+# Configuration and Infrastructure
+# ============================================================================
+
+# Docker and Containerization
+Dockerfile @kalivibecoding
+docker-compose*.yml @kalivibecoding
+.dockerignore @kalivibecoding
+
+# Deployment Configuration
+/vercel.json @kalivibecoding
+/railway.json @kalivibecoding
+/netlify.toml @kalivibecoding
+
+# Environment and Configuration
+/.env* @kalivibecoding
+/config/ @kalivibecoding
+/src/config/ @kalivibecoding
+
+# Infrastructure as Code
+/infrastructure/ @kalivibecoding
+/terraform/ @kalivibecoding
+/k8s/ @kalivibecoding
+/helm/ @kalivibecoding
+
+# ============================================================================
+# CI/CD and GitHub Configuration
+# ============================================================================
+
+# GitHub Workflows and Actions
+/.github/workflows/ @kalivibecoding
+/.github/actions/ @kalivibecoding
+
+# GitHub Configuration
+/.github/ISSUE_TEMPLATE/ @kalivibecoding
+/.github/pull_request_template.md @kalivibecoding
+/.github/CODEOWNERS @kalivibecoding
+/.github/dependabot.yml @kalivibecoding
+
+# ============================================================================
+# Build and Development Tools
+# ============================================================================
+
+# Package Management
+/package.json @kalivibecoding
+/package-lock.json @kalivibecoding
+/yarn.lock @kalivibecoding
+/pnpm-lock.yaml @kalivibecoding
+
+# Build Configuration
+/vite.config.ts @kalivibecoding
+/webpack.config.js @kalivibecoding
+/rollup.config.js @kalivibecoding
+/tsconfig*.json @kalivibecoding
+
+# Linting and Formatting
+/.eslintrc* @kalivibecoding
+/.prettierrc* @kalivibecoding
+/.stylelintrc* @kalivibecoding
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+# Test Configuration
+/jest.config.js @kalivibecoding
+/vitest.config.ts @kalivibecoding
+/playwright.config.ts @kalivibecoding
+/cypress.config.ts @kalivibecoding
+
+# Test Files
+/tests/ @kalivibecoding
+/src/**/*.test.ts @kalivibecoding
+/src/**/*.test.tsx @kalivibecoding
+/src/**/*.spec.ts @kalivibecoding
+/src/**/*.spec.tsx @kalivibecoding
+
+# E2E Tests
+/e2e/ @kalivibecoding
+/cypress/ @kalivibecoding
+
+# ============================================================================
+# Documentation
+# ============================================================================
+
+# Main Documentation
+/README.md @kalivibecoding
+/CONTRIBUTING.md @kalivibecoding
+/CHANGELOG.md @kalivibecoding
+/LICENSE @kalivibecoding
+
+# Documentation Directory
+/docs/ @kalivibecoding
+
+# API Documentation
+/docs/api/ @kalivibecoding
+/openapi.yml @kalivibecoding
+/swagger.yml @kalivibecoding
+
+# Architecture Documentation
+/docs/architecture/ @kalivibecoding
+/docs/adr/ @kalivibecoding
+
+# ============================================================================
+# Styling and Assets
+# ============================================================================
+
+# Styling
+/src/styles/ @kalivibecoding
+/tailwind.config.js @kalivibecoding
+/postcss.config.js @kalivibecoding
+
+# Assets
+/public/ @kalivibecoding
+/src/assets/ @kalivibecoding
+/static/ @kalivibecoding
+
+# ============================================================================
+# Security and Compliance
+# ============================================================================
+
+# Security Configuration
+/.snyk @kalivibecoding
+/security.md @kalivibecoding
+/.secrets.baseline @kalivibecoding
+
+# Compliance and Legal
+/PRIVACY.md @kalivibecoding
+/TERMS.md @kalivibecoding
+/SECURITY.md @kalivibecoding
+
+# ============================================================================
+# Business Logic and Domain-Specific Code
+# ============================================================================
+
+# Bail Bond Specific Features
+/src/features/bonds/ @kalivibecoding
+/src/features/clients/ @kalivibecoding
+/src/features/payments/ @kalivibecoding
+/src/features/court/ @kalivibecoding
+/src/features/reporting/ @kalivibecoding
+
+# Financial and Payment Processing
+/src/services/payment/ @kalivibecoding
+/src/services/financial/ @kalivibecoding
+/src/integrations/stripe/ @kalivibecoding
+/src/integrations/plaid/ @kalivibecoding
+
+# Legal and Compliance Features
+/src/features/compliance/ @kalivibecoding
+/src/services/legal/ @kalivibecoding
+/src/utils/validation/ @kalivibecoding
+
+# ============================================================================
+# Third-Party Integrations
+# ============================================================================
+
+# External API Integrations
+/src/integrations/ @kalivibecoding
+/src/services/external/ @kalivibecoding
+
+# Webhook Handlers
+/src/webhooks/ @kalivibecoding
+
+# ============================================================================
+# File Type Specific Rules
+# ============================================================================
+
+# Documentation Files
+*.md @kalivibecoding
+
+# Configuration Files
+*.json @kalivibecoding
+*.yml @kalivibecoding
+*.yaml @kalivibecoding
+*.toml @kalivibecoding
+*.ini @kalivibecoding
+
+# TypeScript/JavaScript Files
+*.ts @kalivibecoding
+*.tsx @kalivibecoding
+*.js @kalivibecoding
+*.jsx @kalivibecoding
+
+# Styling Files
+*.css @kalivibecoding
+*.scss @kalivibecoding
+*.sass @kalivibecoding
+*.less @kalivibecoding
+
+# Database Files
+*.sql @kalivibecoding
+*.prisma @kalivibecoding

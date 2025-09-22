@@ -1,0 +1,339 @@
+# ============================================================================
+# BailBondPro - Development Docker Compose Configuration
+# Optimized for development with hot reload, debugging, and dev tools
+# ============================================================================
+
+version: '3.8'
+
+networks:
+  bailbondpro-dev:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+  node_modules_cache:
+    driver: local
+  pnpm_cache:
+    driver: local
+
+services:
+  # ============================================================================
+  # Development Application
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: bailbondpro-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"    # Next.js dev server
+      - "3001:3001"    # API server
+      - "9229:9229"    # Node.js debugger
+      - "24678:24678"  # Webpack HMR
+    networks:
+      - bailbondpro-dev
+    volumes:
+      # Source code hot reload
+      - .:/app
+      - /app/node_modules
+      - /app/client/node_modules
+      - /app/server/node_modules
+      # Cache volumes for performance
+      - node_modules_cache:/app/.cache
+      - pnpm_cache:/root/.local/share/pnpm
+      # Development files
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - API_PORT=3001
+      - DATABASE_URL=postgresql://bailbondpro_dev:dev_password@postgres:5432/bailbondpro_dev
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=dev_jwt_secret_key_for_development_only
+      - ENCRYPTION_KEY=dev_encryption_key_32_chars_long
+      - STRIPE_SECRET_KEY=sk_test_dev_key
+      - STRIPE_WEBHOOK_SECRET=whsec_dev_webhook_secret
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=us-east-1
+      - S3_BUCKET=bailbondpro-dev-uploads
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - GOOGLE_ANALYTICS_ID=${GOOGLE_ANALYTICS_ID:-}
+      # Development specific
+      - DEBUG=bailbondpro:*
+      - LOG_LEVEL=debug
+      - ENABLE_CORS=true
+      - CORS_ORIGIN=http://localhost:3000
+      - ENABLE_HOT_RELOAD=true
+      - ENABLE_SOURCE_MAPS=true
+      - DISABLE_RATE_LIMITING=true
+      - ENABLE_DEV_TOOLS=true
+      - WEBPACK_DEV_SERVER=true
+      - FAST_REFRESH=true
+      - NEXT_TELEMETRY_DISABLED=1
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    command: pnpm dev
+
+  # ============================================================================
+  # Development Database
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: bailbondpro-postgres-dev
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    networks:
+      - bailbondpro-dev
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./scripts/dev-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_DB=bailbondpro_dev
+      - POSTGRES_USER=bailbondpro_dev
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_INITDB_ARGS=--auth-host=trust
+    command: >
+      postgres
+      -c log_statement=all
+      -c log_duration=on
+      -c log_line_prefix='%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=100
+      -c shared_buffers=128MB
+      -c effective_cache_size=512MB
+      -c maintenance_work_mem=32MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=8MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=2MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bailbondpro_dev -d bailbondpro_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Development Redis
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: bailbondpro-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - bailbondpro-dev
+    volumes:
+      - redis_dev_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 300
+      --loglevel verbose
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Development Tools
+  # ============================================================================
+  
+  # Database Admin Interface
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: bailbondpro-pgadmin-dev
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    networks:
+      - bailbondpro-dev
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=dev@bailbondpro.com
+      - PGADMIN_DEFAULT_PASSWORD=dev_admin_password
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    volumes:
+      - ./dev-tools/pgadmin:/var/lib/pgadmin
+    depends_on:
+      - postgres
+
+  # Redis Admin Interface
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: bailbondpro-redis-commander-dev
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    networks:
+      - bailbondpro-dev
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=dev
+      - HTTP_PASSWORD=dev_redis_password
+    depends_on:
+      - redis
+
+  # Email Testing (MailHog)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: bailbondpro-mailhog-dev
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - bailbondpro-dev
+
+  # File Upload Testing (MinIO)
+  minio:
+    image: minio/minio:latest
+    container_name: bailbondpro-minio-dev
+    restart: unless-stopped
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    networks:
+      - bailbondpro-dev
+    volumes:
+      - ./dev-tools/minio:/data
+    environment:
+      - MINIO_ROOT_USER=dev_access_key
+      - MINIO_ROOT_PASSWORD=dev_secret_key
+      - MINIO_BROWSER_REDIRECT_URL=http://localhost:9001
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ============================================================================
+  # Development Monitoring (Lightweight)
+  # ============================================================================
+  
+  # Simple metrics collection
+  prometheus-dev:
+    image: prom/prometheus:latest
+    container_name: bailbondpro-prometheus-dev
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    networks:
+      - bailbondpro-dev
+    volumes:
+      - ./monitoring/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=24h'
+      - '--web.enable-lifecycle'
+
+  # Development dashboard
+  grafana-dev:
+    image: grafana/grafana:latest
+    container_name: bailbondpro-grafana-dev
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    networks:
+      - bailbondpro-dev
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=dev_grafana_password
+      - GF_USERS_ALLOW_SIGN_UP=true
+      - GF_USERS_ALLOW_ORG_CREATE=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - ./monitoring/grafana-dev:/var/lib/grafana
+      - ./monitoring/grafana/dev-dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dev-datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus-dev
+
+  # ============================================================================
+  # Testing Services
+  # ============================================================================
+  
+  # Test database for integration tests
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: bailbondpro-postgres-test
+    restart: "no"
+    networks:
+      - bailbondpro-dev
+    environment:
+      - POSTGRES_DB=bailbondpro_test
+      - POSTGRES_USER=bailbondpro_test
+      - POSTGRES_PASSWORD=test_password
+      - POSTGRES_INITDB_ARGS=--auth-host=trust
+    command: >
+      postgres
+      -c fsync=off
+      -c synchronous_commit=off
+      -c full_page_writes=off
+      -c checkpoint_segments=32
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c shared_buffers=256MB
+    profiles:
+      - testing
+
+  # Test Redis for integration tests
+  redis-test:
+    image: redis:7-alpine
+    container_name: bailbondpro-redis-test
+    restart: "no"
+    networks:
+      - bailbondpro-dev
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 64mb
+      --maxmemory-policy allkeys-lru
+    profiles:
+      - testing
+
+# ============================================================================
+# Development Profiles
+# ============================================================================
+
+# Usage:
+# docker-compose -f docker-compose.dev.yml up                    # Basic dev stack
+# docker-compose -f docker-compose.dev.yml --profile tools up   # With dev tools
+# docker-compose -f docker-compose.dev.yml --profile testing up # With test DBs

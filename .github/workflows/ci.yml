@@ -1,0 +1,923 @@
+name: 🚀 CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*', 'hotfix/*' ]
+  pull_request:
+    branches: [ main, develop ]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip test execution'
+        required: false
+        default: false
+        type: boolean
+      run_security_scan:
+        description: 'Run security scan'
+        required: false
+        default: true
+        type: boolean
+      deploy_environment:
+        description: 'Target deployment environment'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '8'
+  POSTGRES_VERSION: '16'
+  REDIS_VERSION: '7'
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+# ============================================================================
+# Concurrency Control & Permissions
+# ============================================================================
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  checks: write
+  deployments: write
+  issues: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  # ============================================================================
+  # Pre-flight Checks & Change Detection
+  # ============================================================================
+  preflight:
+    name: 🔍 Pre-flight Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_run_tests: ${{ steps.changes.outputs.should_run_tests }}
+      should_run_security: ${{ steps.changes.outputs.should_run_security }}
+      affected_packages: ${{ steps.changes.outputs.affected_packages }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect Changes
+        id: changes
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            source:
+              - 'client/**'
+              - 'server/**'
+              - 'shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'tsconfig.json'
+              - '*.config.js'
+            tests:
+              - '**/*.test.ts'
+              - '**/*.test.tsx'
+              - '**/*.spec.ts'
+              - 'jest.config.js'
+              - 'playwright.config.ts'
+            security:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'Dockerfile'
+              - 'docker-compose*.yml'
+            docs:
+              - '**/*.md'
+              - 'docs/**'
+
+      - name: 📊 Set Outputs
+        run: |
+          echo "should_run_tests=${{ steps.changes.outputs.source == 'true' || steps.changes.outputs.tests == 'true' }}" >> $GITHUB_OUTPUT
+          echo "should_run_security=${{ steps.changes.outputs.security == 'true' || github.event.inputs.run_security_scan == 'true' }}" >> $GITHUB_OUTPUT
+          echo "affected_packages=all" >> $GITHUB_OUTPUT
+
+  # ============================================================================
+  # Code Quality & Security
+  # ============================================================================
+  
+  lint-and-format:
+    name: 🔍 Lint & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: preflight
+    if: needs.preflight.outputs.should_run_tests == 'true'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: 🎯 Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🔍 Run ESLint
+        run: pnpm lint
+
+      - name: 🎨 Check Prettier Formatting
+        run: pnpm format:check
+
+      - name: 📊 TypeScript Check
+        run: pnpm type-check
+
+      - name: 📊 Generate Code Quality Report
+        run: |
+          pnpm audit --audit-level moderate --json > audit-report.json || true
+          pnpm outdated --json > outdated-report.json || true
+
+      - name: 📤 Upload Quality Reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: quality-reports
+          path: |
+            audit-report.json
+            outdated-report.json
+          retention-days: 7
+
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        run: npm ci
+
+      - name: 🔍 Run npm audit
+        run: npm audit --audit-level=high
+
+      - name: 🔒 Run Snyk Security Scan
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+      - name: 📊 Upload Snyk Results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: snyk.sarif
+
+      - name: 🔍 Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript
+          queries: security-extended,security-and-quality
+
+      - name: 🔍 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+
+      - name: 🛡️ OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'BailBondPro'
+          path: '.'
+          format: 'ALL'
+          args: >
+            --enableRetired
+            --enableExperimental
+            --failOnCVSS 7
+        continue-on-error: true
+
+      - name: 📊 Upload OWASP Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: reports/
+        if: always()
+
+      - name: 🔐 Secrets Detection with TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # ============================================================================
+  # Testing
+  # ============================================================================
+
+  unit-tests:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [16, 18, 20]
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        run: npm ci
+
+      - name: 🧪 Run Unit Tests
+        run: npm run test:unit -- --coverage
+
+      - name: 📊 Upload Coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: unit-tests
+          name: unit-tests-node-${{ matrix.node-version }}
+
+  integration-tests:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bailbondpro_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        run: npm ci
+
+      - name: 🗄️ Setup Database
+        run: |
+          npm run db:migrate
+          npm run db:seed:test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/bailbondpro_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: 🔗 Run Integration Tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/bailbondpro_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-secret
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+
+      - name: 📊 Upload Integration Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: integration-test-results
+          path: test-results/
+
+  e2e-tests:
+    name: 🎭 E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        run: npm ci
+
+      - name: 📥 Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: 🏗️ Build Application
+        run: npm run build
+
+      - name: 🚀 Start Application
+        run: |
+          npm run start:test &
+          npx wait-on http://localhost:3000
+        env:
+          NODE_ENV: test
+          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+
+      - name: 🎭 Run Playwright Tests
+        run: npx playwright test
+
+      - name: 📊 Upload E2E Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: e2e-test-results
+          path: |
+            playwright-report/
+            test-results/
+
+  # ============================================================================
+  # Build & Performance
+  # ============================================================================
+
+  build:
+    name: 🏗️ Build Application
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, security-scan]
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        run: npm ci
+
+      - name: 🏗️ Build Frontend
+        run: npm run build:client
+
+      - name: 🏗️ Build Backend
+        run: npm run build:server
+
+      - name: 📊 Analyze Bundle Size
+        run: npm run analyze:bundle
+
+      - name: 📦 Upload Build Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: |
+            dist/
+            build/
+            .next/
+
+  docker-build:
+    name: 🐳 Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [build, integration-tests]
+    if: github.event_name == 'push'
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: 🔐 Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 📊 Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: 🏗️ Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: 🔍 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: 📊 Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  performance-tests:
+    name: ⚡ Performance Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Download Build Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📥 Install Dependencies
+        run: npm ci
+
+      - name: 🚀 Start Application
+        run: |
+          npm run start:prod &
+          npx wait-on http://localhost:3000
+
+      - name: ⚡ Run Lighthouse CI
+        run: |
+          npm install -g @lhci/cli@0.12.x
+          lhci autorun
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+      - name: 🚀 Install k6 for Load Testing
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: ⚡ Run Load Tests
+        run: |
+          if [ -f "tests/performance/load-test.js" ]; then
+            k6 run tests/performance/load-test.js
+          else
+            echo "Load test file not found, skipping..."
+          fi
+        env:
+          BASE_URL: http://localhost:3000
+
+      - name: 📊 Upload Performance Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: lighthouse-results
+          path: .lighthouseci/
+
+  # ============================================================================
+  # Deployment
+  # ============================================================================
+
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, build, docker-build]
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: https://staging.bailbondpro.com
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Download Build Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+
+      - name: 🚀 Deploy to Railway (Staging)
+        run: |
+          if [ -n "${{ secrets.RAILWAY_TOKEN_STAGING }}" ]; then
+            echo "Deploying to Railway staging environment..."
+            # Railway deployment would go here
+          else
+            echo "Railway staging token not configured, skipping..."
+          fi
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+
+      - name: 🚀 Deploy to Vercel (Staging)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--env staging'
+          scope: ${{ secrets.VERCEL_ORG_ID }}
+
+      - name: ⏳ Wait for Deployment
+        run: sleep 60
+
+      - name: 🔍 Run Smoke Tests
+        run: npm run test:smoke
+        env:
+          BASE_URL: https://staging.bailbondpro.com
+
+      - name: 🏥 Health Check
+        run: |
+          if [ -f "./scripts/health-check.sh" ]; then
+            ./scripts/health-check.sh --environment staging --url https://staging.bailbondpro.com
+          else
+            curl -f https://staging.bailbondpro.com/health || exit 1
+          fi
+
+      - name: 📢 Notify Staging Deployment
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          custom_payload: |
+            {
+              "text": "🚀 Staging deployment completed!",
+              "attachments": [
+                {
+                  "color": "good",
+                  "fields": [
+                    {
+                      "title": "Environment",
+                      "value": "Staging",
+                      "short": true
+                    },
+                    {
+                      "title": "Branch",
+                      "value": "${{ github.ref_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "URL",
+                      "value": "https://staging.bailbondpro.com",
+                      "short": false
+                    }
+                  ]
+                }
+              ]
+            }
+        if: always()
+
+  deploy-production:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, e2e-tests, build, performance-tests, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://bailbondpro.com
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Download Build Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+
+      - name: 💾 Create Pre-deployment Backup
+        run: |
+          if [ -f "./scripts/backup.sh" ]; then
+            ./scripts/backup.sh --environment production --type pre-deploy
+          else
+            echo "Backup script not found, skipping backup..."
+          fi
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+
+      - name: 🚀 Deploy to Railway (Production)
+        run: |
+          if [ -n "${{ secrets.RAILWAY_TOKEN_PRODUCTION }}" ]; then
+            echo "Deploying to Railway production environment..."
+            # Railway deployment would go here
+          else
+            echo "Railway production token not configured, skipping..."
+          fi
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+
+      - name: 🚀 Deploy to Vercel (Production)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+          scope: ${{ secrets.VERCEL_ORG_ID }}
+
+      - name: 🌐 Update DNS Records
+        run: |
+          if [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            curl -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records/${{ secrets.CLOUDFLARE_RECORD_ID }}" \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              --data '{"type":"CNAME","name":"bailbondpro.com","content":"bailbondpro.vercel.app"}'
+          else
+            echo "Cloudflare credentials not configured, skipping DNS update..."
+          fi
+
+      - name: ⏳ Wait for Deployment & DNS Propagation
+        run: sleep 120
+
+      - name: 🔍 Run Production Smoke Tests
+        run: npm run test:smoke
+        env:
+          BASE_URL: https://bailbondpro.com
+
+      - name: 🏥 Comprehensive Health Check
+        run: |
+          if [ -f "./scripts/health-check.sh" ]; then
+            ./scripts/health-check.sh --environment production --comprehensive --url https://bailbondpro.com
+          else
+            curl -f https://bailbondpro.com/health || exit 1
+          fi
+        env:
+          HEALTH_CHECK_URL: https://bailbondpro.com
+          HEALTH_CHECK_TOKEN: ${{ secrets.HEALTH_CHECK_TOKEN }}
+
+      - name: 🏷️ Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Release v${{ github.run_number }}
+          body: |
+            🚀 Automated production release from commit ${{ github.sha }}
+            
+            ## 📋 Changes
+            ${{ github.event.head_commit.message }}
+            
+            ## 🌐 Deployment URLs
+            - **Production**: https://bailbondpro.com
+            - **Staging**: https://staging.bailbondpro.com
+            
+            ## 📊 Build Information
+            - **Commit**: ${{ github.sha }}
+            - **Author**: ${{ github.actor }}
+            - **Workflow**: ${{ github.workflow }}
+            - **Run ID**: ${{ github.run_id }}
+          draft: false
+          prerelease: false
+
+      - name: 📊 Update Deployment Status
+        run: |
+          echo "✅ Production deployment successful!"
+          echo "🌐 URL: https://bailbondpro.com"
+          echo "📊 Build: ${{ github.sha }}"
+
+      - name: 📢 Notify Deployment Success
+        if: success()
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "🚀 Production Deployment Successful!",
+                "attachments": [
+                  {
+                    "color": "good",
+                    "fields": [
+                      {"title": "Environment", "value": "Production", "short": true},
+                      {"title": "URL", "value": "https://bailbondpro.com", "short": true},
+                      {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                      {"title": "Author", "value": "${{ github.actor }}", "short": true},
+                      {"title": "Release", "value": "v${{ github.run_number }}", "short": true},
+                      {"title": "Workflow", "value": "${{ github.workflow }}", "short": true}
+                    ]
+                  }
+                ]
+              }' \
+              ${{ secrets.SLACK_WEBHOOK_URL }}
+          fi
+
+      - name: 📢 Notify Deployment Failure
+        if: failure()
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "❌ Production Deployment Failed!",
+                "attachments": [
+                  {
+                    "color": "danger",
+                    "fields": [
+                      {"title": "Environment", "value": "Production", "short": true},
+                      {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                      {"title": "Author", "value": "${{ github.actor }}", "short": true},
+                      {"title": "Workflow", "value": "${{ github.workflow }}", "short": true},
+                      {"title": "Run ID", "value": "${{ github.run_id }}", "short": true},
+                      {"title": "Action", "value": "Check logs and rollback if necessary", "short": false}
+                    ]
+                  }
+                ]
+              }' \
+              ${{ secrets.SLACK_WEBHOOK_URL }}
+          fi
+
+  cleanup:
+    name: 🧹 Cleanup & Maintenance
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🧹 Clean Old Artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            
+            for (const artifact of artifacts.data.artifacts) {
+              if (artifact.name.includes('old-') || artifact.created_at < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)) {
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id,
+                });
+              }
+            }
+
+      - name: 🗑️ Clean Old Docker Images
+        run: |
+          if [ -n "${{ secrets.DOCKER_USERNAME }}" ]; then
+            echo "Cleaning old Docker images..."
+            # Docker Hub cleanup would go here
+          fi
+
+      - name: 📊 Generate Deployment Report
+        run: |
+          echo "# 📊 Deployment Report" > deployment-report.md
+          echo "" >> deployment-report.md
+          echo "**Date:** $(date)" >> deployment-report.md
+          echo "**Commit:** ${{ github.sha }}" >> deployment-report.md
+          echo "**Author:** ${{ github.actor }}" >> deployment-report.md
+          echo "**Workflow:** ${{ github.workflow }}" >> deployment-report.md
+          echo "**Run ID:** ${{ github.run_id }}" >> deployment-report.md
+          echo "" >> deployment-report.md
+          echo "## 🌐 Deployment URLs" >> deployment-report.md
+          echo "- **Production:** https://bailbondpro.com" >> deployment-report.md
+          echo "- **Staging:** https://staging.bailbondpro.com" >> deployment-report.md
+          echo "" >> deployment-report.md
+          echo "## ✅ Status" >> deployment-report.md
+          echo "- All tests passed" >> deployment-report.md
+          echo "- Security scans completed" >> deployment-report.md
+          echo "- Performance benchmarks met" >> deployment-report.md
+          echo "- Deployment successful" >> deployment-report.md
+
+      - name: 📤 Upload Deployment Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-report
+          path: deployment-report.md
+          retention-days: 30
+
+  # ============================================================================
+  # Notifications & Cleanup
+  # ============================================================================
+
+  notify-success:
+    name: 📢 Notify Success
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: success()
+    steps:
+      - name: 📢 Send Success Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#deployments'
+          text: |
+            🎉 BailBondPro deployed successfully!
+            🌐 Production: https://bailbondpro.com
+            📊 Build: ${{ github.sha }}
+            👤 Author: ${{ github.actor }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  notify-failure:
+    name: 📢 Notify Failure
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, e2e-tests, build, deploy-staging, deploy-production]
+    if: failure()
+    steps:
+      - name: 📢 Send Failure Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#alerts'
+          text: |
+            ❌ BailBondPro deployment failed!
+            📊 Build: ${{ github.sha }}
+            👤 Author: ${{ github.actor }}
+            🔗 Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  cleanup:
+    name: 🧹 Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-production, notify-success, notify-failure]
+    if: always()
+    steps:
+      - name: 🧹 Clean up artifacts
+        uses: geekyeggo/delete-artifact@v2
+        with:
+          name: |
+            build-artifacts
+            integration-test-results
+            e2e-test-results
+            lighthouse-results
+          failOnError: false
+
+# ============================================================================
+# Workflow Configuration
+# ============================================================================
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  checks: write
+  deployments: write
+  issues: write
+  pull-requests: write

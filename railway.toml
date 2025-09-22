@@ -1,0 +1,141 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pnpm install --frozen-lockfile && pnpm build"
+watchPatterns = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json"]
+
+[deploy]
+startCommand = "pnpm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[environments.production]
+[environments.production.variables]
+NODE_ENV = "production"
+PORT = "3000"
+RAILWAY_STATIC_URL = "https://bailbondpro.up.railway.app"
+RAILWAY_PUBLIC_DOMAIN = "bailbondpro.com"
+
+[environments.staging]
+[environments.staging.variables]
+NODE_ENV = "staging"
+PORT = "3000"
+RAILWAY_STATIC_URL = "https://bailbondpro-staging.up.railway.app"
+
+[environments.development]
+[environments.development.variables]
+NODE_ENV = "development"
+PORT = "3000"
+
+# Service Configuration
+[[services]]
+name = "bailbondpro-web"
+source = "."
+build.builder = "nixpacks"
+build.buildCommand = "pnpm install --frozen-lockfile && pnpm build:client"
+deploy.startCommand = "pnpm start:client"
+deploy.healthcheckPath = "/health"
+
+[[services]]
+name = "bailbondpro-api"
+source = "."
+build.builder = "nixpacks"
+build.buildCommand = "pnpm install --frozen-lockfile && pnpm build:server"
+deploy.startCommand = "pnpm start:server"
+deploy.healthcheckPath = "/api/health"
+
+[[services]]
+name = "bailbondpro-worker"
+source = "."
+build.builder = "nixpacks"
+build.buildCommand = "pnpm install --frozen-lockfile && pnpm build:worker"
+deploy.startCommand = "pnpm start:worker"
+
+# Database Configuration
+[[services]]
+name = "bailbondpro-postgres"
+plugin = "postgresql"
+[services.variables]
+POSTGRES_DB = "bailbondpro"
+POSTGRES_USER = "bailbondpro"
+
+[[services]]
+name = "bailbondpro-redis"
+plugin = "redis"
+
+# Networking
+[networking]
+[networking.serviceDomains]
+bailbondpro-web = ["bailbondpro.com", "www.bailbondpro.com"]
+bailbondpro-api = ["api.bailbondpro.com"]
+
+# Monitoring & Observability
+[observability]
+[observability.logging]
+level = "info"
+format = "json"
+
+[observability.metrics]
+enabled = true
+port = 9090
+
+[observability.tracing]
+enabled = true
+endpoint = "https://api.honeycomb.io"
+
+# Scaling Configuration
+[scaling]
+[scaling.autoscaling]
+enabled = true
+minReplicas = 1
+maxReplicas = 10
+targetCPUUtilization = 70
+targetMemoryUtilization = 80
+
+[scaling.resources]
+[scaling.resources.requests]
+cpu = "100m"
+memory = "256Mi"
+
+[scaling.resources.limits]
+cpu = "1000m"
+memory = "1Gi"
+
+# Security
+[security]
+[security.networkPolicies]
+enabled = true
+allowedIngressPorts = [80, 443, 3000]
+
+[security.podSecurityPolicy]
+enabled = true
+allowPrivilegeEscalation = false
+runAsNonRoot = true
+
+# Backup Configuration
+[backup]
+enabled = true
+schedule = "0 2 * * *"
+retention = "30d"
+
+# Cron Jobs
+[[crons]]
+name = "cleanup-job"
+schedule = "0 2 * * *"
+command = "pnpm run cron:cleanup"
+
+[[crons]]
+name = "backup-job"
+schedule = "0 3 * * 0"
+command = "pnpm run cron:backup"
+
+[[crons]]
+name = "reports-job"
+schedule = "0 8 * * 1"
+command = "pnpm run cron:reports"
+
+[[crons]]
+name = "health-check"
+schedule = "*/5 * * * *"
+command = "pnpm run cron:health-check"

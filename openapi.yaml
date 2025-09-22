@@ -1,0 +1,1222 @@
+openapi: 3.0.3
+info:
+  title: BailBondPro API
+  description: |
+    Comprehensive bail bond management API providing secure access to client management, 
+    bond processing, payment handling, and administrative features.
+    
+    ## Features
+    - Client and defendant management
+    - Bond creation and tracking
+    - Payment processing and financial management
+    - Court integration and scheduling
+    - Document management and e-signatures
+    - Real-time notifications and webhooks
+    - Comprehensive reporting and analytics
+    
+    ## Authentication
+    This API uses Bearer token authentication. Include your API key or JWT token in the Authorization header.
+    
+    ## Rate Limiting
+    - Default: 1000 requests per hour per API key
+    - Burst: 100 requests per minute
+    
+  version: 1.0.0
+  contact:
+    name: BailBondPro Support
+    email: support@bailbondpro.com
+    url: https://bailbondpro.com/support
+  license:
+    name: Proprietary
+    url: https://bailbondpro.com/license
+  termsOfService: https://bailbondpro.com/terms
+
+servers:
+  - url: https://api.bailbondpro.com/api/v1
+    description: Production server
+  - url: https://api-staging.bailbondpro.com/api/v1
+    description: Staging server
+  - url: http://localhost:3000/api/v1
+    description: Development server
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+paths:
+  # Authentication Endpoints
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user and return JWT tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  example: password123
+                mfa_code:
+                  type: string
+                  example: "123456"
+                  description: Multi-factor authentication code (if enabled)
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          access_token:
+                            type: string
+                            example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                          refresh_token:
+                            type: string
+                            example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                          expires_in:
+                            type: integer
+                            example: 3600
+                          user:
+                            $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Get new access token using refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+                  example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          access_token:
+                            type: string
+                          expires_in:
+                            type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: User logout
+      description: Invalidate current session and tokens
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  # Client Management Endpoints
+  /clients:
+    get:
+      tags:
+        - Clients
+      summary: List clients
+      description: Retrieve a paginated list of clients
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: search
+          in: query
+          description: Search by name, email, or phone
+          schema:
+            type: string
+            example: john doe
+        - name: status
+          in: query
+          description: Filter by client status
+          schema:
+            type: string
+            enum: [active, inactive, suspended]
+        - name: sort
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [name, created_at, updated_at]
+            default: created_at
+        - name: order
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Clients retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ClientSummary'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags:
+        - Clients
+      summary: Create client
+      description: Create a new client record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientCreate'
+      responses:
+        '201':
+          description: Client created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Client'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /clients/{client_id}:
+    get:
+      tags:
+        - Clients
+      summary: Get client
+      description: Retrieve detailed client information
+      parameters:
+        - $ref: '#/components/parameters/ClientId'
+      responses:
+        '200':
+          description: Client retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Client'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Clients
+      summary: Update client
+      description: Update client information
+      parameters:
+        - $ref: '#/components/parameters/ClientId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientUpdate'
+      responses:
+        '200':
+          description: Client updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Client'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+    delete:
+      tags:
+        - Clients
+      summary: Delete client
+      description: Soft delete a client record
+      parameters:
+        - $ref: '#/components/parameters/ClientId'
+      responses:
+        '200':
+          description: Client deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # Bond Management Endpoints
+  /bonds:
+    get:
+      tags:
+        - Bonds
+      summary: List bonds
+      description: Retrieve a paginated list of bonds
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: Filter by bond status
+          schema:
+            type: string
+            enum: [pending, active, completed, cancelled, forfeited]
+        - name: client_id
+          in: query
+          description: Filter by client ID
+          schema:
+            type: string
+        - name: date_from
+          in: query
+          description: Filter bonds from date (ISO 8601)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          description: Filter bonds to date (ISO 8601)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Bonds retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BondSummary'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Bonds
+      summary: Create bond
+      description: Create a new bond
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BondCreate'
+      responses:
+        '201':
+          description: Bond created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Bond'
+
+  /bonds/{bond_id}:
+    get:
+      tags:
+        - Bonds
+      summary: Get bond
+      description: Retrieve detailed bond information
+      parameters:
+        - $ref: '#/components/parameters/BondId'
+      responses:
+        '200':
+          description: Bond retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Bond'
+
+    put:
+      tags:
+        - Bonds
+      summary: Update bond
+      description: Update bond information
+      parameters:
+        - $ref: '#/components/parameters/BondId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BondUpdate'
+      responses:
+        '200':
+          description: Bond updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Bond'
+
+  # Payment Endpoints
+  /payments:
+    get:
+      tags:
+        - Payments
+      summary: List payments
+      description: Retrieve a paginated list of payments
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: Filter by payment status
+          schema:
+            type: string
+            enum: [pending, completed, failed, refunded]
+        - name: bond_id
+          in: query
+          description: Filter by bond ID
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          description: Filter by client ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payments retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Payment'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Payments
+      summary: Process payment
+      description: Process a new payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+      responses:
+        '201':
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Payment'
+
+  /payments/{payment_id}:
+    get:
+      tags:
+        - Payments
+      summary: Get payment
+      description: Retrieve payment details
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Payment retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Payment'
+
+  # Webhook Endpoints
+  /webhooks:
+    get:
+      tags:
+        - Webhooks
+      summary: List webhooks
+      description: Retrieve configured webhooks
+      responses:
+        '200':
+          description: Webhooks retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Webhook'
+
+    post:
+      tags:
+        - Webhooks
+      summary: Create webhook
+      description: Create a new webhook endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreate'
+      responses:
+        '201':
+          description: Webhook created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Webhook'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from login endpoint
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for service-to-service authentication
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Page number
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      description: Items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    ClientId:
+      name: client_id
+      in: path
+      required: true
+      description: Client ID
+      schema:
+        type: string
+        example: client_123
+    BondId:
+      name: bond_id
+      in: path
+      required: true
+      description: Bond ID
+      schema:
+        type: string
+        example: bond_123
+    PaymentId:
+      name: payment_id
+      in: path
+      required: true
+      description: Payment ID
+      schema:
+        type: string
+        example: payment_123
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: BAD_REQUEST
+              message: Invalid request parameters
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: AUTHENTICATION_FAILED
+              message: Invalid or expired token
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: AUTHORIZATION_FAILED
+              message: Insufficient permissions
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: RESOURCE_NOT_FOUND
+              message: Resource not found
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: Invalid input data
+              details:
+                - field: email
+                  message: Email is required
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: RATE_LIMIT_EXCEEDED
+              message: Too many requests
+
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Operation completed successfully
+        meta:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              format: date-time
+              example: "2024-01-15T10:30:00Z"
+            request_id:
+              type: string
+              example: req_123456789
+            version:
+              type: string
+              example: "1.0.0"
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Invalid input data
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+        meta:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              format: date-time
+            request_id:
+              type: string
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 150
+        pages:
+          type: integer
+          example: 8
+        has_next:
+          type: boolean
+          example: true
+        has_prev:
+          type: boolean
+          example: false
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: user_123
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        first_name:
+          type: string
+          example: John
+        last_name:
+          type: string
+          example: Doe
+        role:
+          type: string
+          enum: [admin, agent, manager]
+          example: agent
+        permissions:
+          type: array
+          items:
+            type: string
+          example: ["read:clients", "write:bonds"]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+          example: "123 Main St"
+        city:
+          type: string
+          example: "Anytown"
+        state:
+          type: string
+          example: "CA"
+        zip:
+          type: string
+          example: "12345"
+        country:
+          type: string
+          example: "US"
+          default: "US"
+
+    EmergencyContact:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Jane Doe"
+        phone:
+          type: string
+          example: "+1234567891"
+        relationship:
+          type: string
+          example: "spouse"
+        address:
+          $ref: '#/components/schemas/Address'
+
+    ClientSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: client_123
+        first_name:
+          type: string
+          example: John
+        last_name:
+          type: string
+          example: Doe
+        email:
+          type: string
+          format: email
+          example: john.doe@example.com
+        phone:
+          type: string
+          example: "+1234567890"
+        status:
+          type: string
+          enum: [active, inactive, suspended]
+          example: active
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Client:
+      allOf:
+        - $ref: '#/components/schemas/ClientSummary'
+        - type: object
+          properties:
+            date_of_birth:
+              type: string
+              format: date
+              example: "1990-01-15"
+            ssn:
+              type: string
+              example: "***-**-1234"
+            address:
+              $ref: '#/components/schemas/Address'
+            emergency_contact:
+              $ref: '#/components/schemas/EmergencyContact'
+            notes:
+              type: string
+              example: "Client notes and comments"
+
+    ClientCreate:
+      type: object
+      required:
+        - first_name
+        - last_name
+        - email
+        - phone
+      properties:
+        first_name:
+          type: string
+          example: John
+        last_name:
+          type: string
+          example: Doe
+        email:
+          type: string
+          format: email
+          example: john.doe@example.com
+        phone:
+          type: string
+          example: "+1234567890"
+        date_of_birth:
+          type: string
+          format: date
+          example: "1990-01-15"
+        ssn:
+          type: string
+          example: "123-45-6789"
+        address:
+          $ref: '#/components/schemas/Address'
+        emergency_contact:
+          $ref: '#/components/schemas/EmergencyContact'
+        notes:
+          type: string
+
+    ClientUpdate:
+      type: object
+      properties:
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        date_of_birth:
+          type: string
+          format: date
+        address:
+          $ref: '#/components/schemas/Address'
+        emergency_contact:
+          $ref: '#/components/schemas/EmergencyContact'
+        status:
+          type: string
+          enum: [active, inactive, suspended]
+        notes:
+          type: string
+
+    BondSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: bond_123
+        bond_number:
+          type: string
+          example: "BB-2024-001"
+        client_id:
+          type: string
+          example: client_123
+        defendant_name:
+          type: string
+          example: "John Doe"
+        bond_amount:
+          type: number
+          format: decimal
+          example: 10000.00
+        premium_amount:
+          type: number
+          format: decimal
+          example: 1000.00
+        status:
+          type: string
+          enum: [pending, active, completed, cancelled, forfeited]
+          example: active
+        court_date:
+          type: string
+          format: date-time
+          example: "2024-02-15T09:00:00Z"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Bond:
+      allOf:
+        - $ref: '#/components/schemas/BondSummary'
+        - type: object
+          properties:
+            case_number:
+              type: string
+              example: "CR-2024-001"
+            charges:
+              type: array
+              items:
+                type: string
+              example: ["DUI", "Reckless Driving"]
+            court_name:
+              type: string
+              example: "Superior Court of California"
+            judge_name:
+              type: string
+              example: "Judge Smith"
+            collateral:
+              type: array
+              items:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    example: "real_estate"
+                  description:
+                    type: string
+                    example: "123 Main St, Anytown, CA"
+                  value:
+                    type: number
+                    format: decimal
+                    example: 50000.00
+            co_signers:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  relationship:
+                    type: string
+                  contact_info:
+                    type: object
+            notes:
+              type: string
+
+    BondCreate:
+      type: object
+      required:
+        - client_id
+        - defendant_name
+        - bond_amount
+        - premium_amount
+        - court_date
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        defendant_name:
+          type: string
+          example: "John Doe"
+        bond_amount:
+          type: number
+          format: decimal
+          example: 10000.00
+        premium_amount:
+          type: number
+          format: decimal
+          example: 1000.00
+        case_number:
+          type: string
+          example: "CR-2024-001"
+        charges:
+          type: array
+          items:
+            type: string
+        court_name:
+          type: string
+        court_date:
+          type: string
+          format: date-time
+        judge_name:
+          type: string
+        collateral:
+          type: array
+          items:
+            type: object
+        co_signers:
+          type: array
+          items:
+            type: object
+        notes:
+          type: string
+
+    BondUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, active, completed, cancelled, forfeited]
+        court_date:
+          type: string
+          format: date-time
+        notes:
+          type: string
+
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+          example: payment_123
+        bond_id:
+          type: string
+          example: bond_123
+        client_id:
+          type: string
+          example: client_123
+        amount:
+          type: number
+          format: decimal
+          example: 1000.00
+        payment_method:
+          type: string
+          enum: [credit_card, debit_card, ach, cash, check]
+          example: credit_card
+        status:
+          type: string
+          enum: [pending, completed, failed, refunded]
+          example: completed
+        transaction_id:
+          type: string
+          example: "txn_123456789"
+        payment_date:
+          type: string
+          format: date-time
+        notes:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PaymentCreate:
+      type: object
+      required:
+        - bond_id
+        - amount
+        - payment_method
+      properties:
+        bond_id:
+          type: string
+          example: bond_123
+        amount:
+          type: number
+          format: decimal
+          example: 1000.00
+        payment_method:
+          type: string
+          enum: [credit_card, debit_card, ach, cash, check]
+        payment_details:
+          type: object
+          description: Payment method specific details
+        notes:
+          type: string
+
+    Webhook:
+      type: object
+      properties:
+        id:
+          type: string
+          example: webhook_123
+        url:
+          type: string
+          format: uri
+          example: "https://example.com/webhook"
+        events:
+          type: array
+          items:
+            type: string
+          example: ["bond.created", "payment.completed"]
+        status:
+          type: string
+          enum: [active, inactive]
+          example: active
+        secret:
+          type: string
+          example: "whsec_123456789"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    WebhookCreate:
+      type: object
+      required:
+        - url
+        - events
+      properties:
+        url:
+          type: string
+          format: uri
+          example: "https://example.com/webhook"
+        events:
+          type: array
+          items:
+            type: string
+          example: ["bond.created", "payment.completed"]
+        description:
+          type: string
+          example: "Webhook for bond and payment events"
+
+tags:
+  - name: Authentication
+    description: User authentication and session management
+  - name: Clients
+    description: Client management operations
+  - name: Bonds
+    description: Bond management operations
+  - name: Payments
+    description: Payment processing operations
+  - name: Webhooks
+    description: Webhook configuration and management
+
+externalDocs:
+  description: BailBondPro Documentation
+  url: https://docs.bailbondpro.com

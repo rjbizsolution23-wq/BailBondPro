@@ -1,0 +1,2755 @@
+name: 🔒 Security Scanning & Compliance
+
+on:
+  push:
+    branches: [main, develop, 'feature/*', 'hotfix/*']
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: 'Type of security scan to run'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - dependencies
+          - code
+          - secrets
+          - infrastructure
+          - compliance
+      severity_threshold:
+        description: 'Minimum severity level to report'
+        required: false
+        default: 'medium'
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+          - critical
+      skip_container_scan:
+        description: 'Skip container security scanning'
+        required: false
+        default: false
+        type: boolean
+      notify_on_success:
+        description: 'Send notifications on successful scans'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '8'
+  PYTHON_VERSION: '3.11'
+  DOCKER_BUILDKIT: '1'
+  COMPOSE_DOCKER_CLI_BUILD: '1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: security-${{ github.ref }}-${{ github.event.inputs.scan_type || 'auto' }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # SECURITY PREFLIGHT & CHANGE DETECTION
+  # ============================================================================
+  preflight:
+    name: 🔍 Security Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_code_changes: ${{ steps.changes.outputs.code }}
+      has_dependencies: ${{ steps.changes.outputs.dependencies }}
+      has_docker: ${{ steps.changes.outputs.docker }}
+      has_infrastructure: ${{ steps.changes.outputs.infrastructure }}
+      scan_dependencies: ${{ steps.determine.outputs.scan_dependencies }}
+      scan_code: ${{ steps.determine.outputs.scan_code }}
+      scan_secrets: ${{ steps.determine.outputs.scan_secrets }}
+      scan_infrastructure: ${{ steps.determine.outputs.scan_infrastructure }}
+      scan_compliance: ${{ steps.determine.outputs.scan_compliance }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect Changes
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'app/**'
+              - 'pages/**'
+              - 'components/**'
+              - '**/*.js'
+              - '**/*.jsx'
+              - '**/*.ts'
+              - '**/*.tsx'
+              - '**/*.vue'
+              - '**/*.py'
+            dependencies:
+              - 'package.json'
+              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
+              - 'yarn.lock'
+              - 'requirements.txt'
+              - 'Pipfile'
+              - 'poetry.lock'
+            docker:
+              - 'Dockerfile*'
+              - 'docker-compose*.yml'
+              - '.dockerignore'
+            infrastructure:
+              - '**/*.tf'
+              - '**/*.yaml'
+              - '**/*.yml'
+              - 'k8s/**'
+              - '.github/workflows/**'
+
+      - name: 🎯 Determine Scan Scope
+        id: determine
+        run: |
+          SCAN_TYPE="${{ github.event.inputs.scan_type || 'full' }}"
+          
+          echo "🎯 Determining scan scope for type: $SCAN_TYPE"
+          
+          # Default to scanning everything for full scans or scheduled runs
+          if [[ "$SCAN_TYPE" == "full" ]] || [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "scan_dependencies=true" >> $GITHUB_OUTPUT
+            echo "scan_code=true" >> $GITHUB_OUTPUT
+            echo "scan_secrets=true" >> $GITHUB_OUTPUT
+            echo "scan_infrastructure=true" >> $GITHUB_OUTPUT
+            echo "scan_compliance=true" >> $GITHUB_OUTPUT
+          else
+            # Selective scanning based on input or changes
+            echo "scan_dependencies=$([[ '$SCAN_TYPE' == 'dependencies' ]] || [[ '${{ steps.changes.outputs.dependencies }}' == 'true' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+            echo "scan_code=$([[ '$SCAN_TYPE' == 'code' ]] || [[ '${{ steps.changes.outputs.code }}' == 'true' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+            echo "scan_secrets=$([[ '$SCAN_TYPE' == 'secrets' ]] || [[ '${{ steps.changes.outputs.code }}' == 'true' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+            echo "scan_infrastructure=$([[ '$SCAN_TYPE' == 'infrastructure' ]] || [[ '${{ steps.changes.outputs.infrastructure }}' == 'true' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+            echo "scan_compliance=$([[ '$SCAN_TYPE' == 'compliance' ]] || [[ '$SCAN_TYPE' == 'full' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "📊 Scan Configuration:"
+          echo "  Dependencies: $(echo '${{ steps.determine.outputs.scan_dependencies }}')"
+          echo "  Code: $(echo '${{ steps.determine.outputs.scan_code }}')"
+          echo "  Secrets: $(echo '${{ steps.determine.outputs.scan_secrets }}')"
+          echo "  Infrastructure: $(echo '${{ steps.determine.outputs.scan_infrastructure }}')"
+          echo "  Compliance: $(echo '${{ steps.determine.outputs.scan_compliance }}')"
+
+  # ============================================================================
+  # DEPENDENCY SECURITY SCANNING
+  # ============================================================================
+  
+  dependency-scan:
+    name: 🔍 Dependency Security Scan
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.scan_dependencies == 'true'
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        scanner: [npm-audit, snyk, safety]
+      fail-fast: false
+    outputs:
+      vulnerabilities_found: ${{ steps.summary.outputs.vulnerabilities_found }}
+      critical_count: ${{ steps.summary.outputs.critical_count }}
+      high_count: ${{ steps.summary.outputs.high_count }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🔍 NPM Audit Scan
+        if: matrix.scanner == 'npm-audit'
+        run: |
+          echo "🔍 Running NPM Audit..."
+          pnpm audit --audit-level=moderate --json > npm-audit-results.json || true
+          
+          # Parse results and create summary
+          if [ -f npm-audit-results.json ]; then
+            echo "📊 NPM Audit Results:"
+            cat npm-audit-results.json | jq -r '.metadata.vulnerabilities | to_entries[] | "\(.key): \(.value)"'
+          fi
+
+      - name: 🔍 Snyk Security Scan
+        if: matrix.scanner == 'snyk'
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium --json-file-output=snyk-results.json
+
+      - name: 🐍 Python Safety Scan
+        if: matrix.scanner == 'safety' && hashFiles('requirements.txt', 'Pipfile', 'poetry.lock') != ''
+        run: |
+          echo "🐍 Setting up Python for Safety scan..."
+          pip install safety
+          
+          if [ -f requirements.txt ]; then
+            echo "🔍 Scanning requirements.txt..."
+            safety check -r requirements.txt --json --output safety-results.json || true
+          fi
+          
+          if [ -f Pipfile ]; then
+            echo "🔍 Scanning Pipfile..."
+            safety check --json --output safety-pipfile-results.json || true
+          fi
+
+      - name: 📊 Vulnerability Summary
+        id: summary
+        run: |
+          CRITICAL=0
+          HIGH=0
+          TOTAL=0
+          
+          # Process NPM Audit results
+          if [ -f npm-audit-results.json ]; then
+            CRITICAL=$(cat npm-audit-results.json | jq -r '.metadata.vulnerabilities.critical // 0')
+            HIGH=$(cat npm-audit-results.json | jq -r '.metadata.vulnerabilities.high // 0')
+            TOTAL=$((CRITICAL + HIGH))
+          fi
+          
+          # Process Snyk results
+          if [ -f snyk-results.json ]; then
+            SNYK_CRITICAL=$(cat snyk-results.json | jq '[.vulnerabilities[] | select(.severity == "critical")] | length')
+            SNYK_HIGH=$(cat snyk-results.json | jq '[.vulnerabilities[] | select(.severity == "high")] | length')
+            CRITICAL=$((CRITICAL + SNYK_CRITICAL))
+            HIGH=$((HIGH + SNYK_HIGH))
+            TOTAL=$((TOTAL + SNYK_CRITICAL + SNYK_HIGH))
+          fi
+          
+          echo "critical_count=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high_count=$HIGH" >> $GITHUB_OUTPUT
+          echo "vulnerabilities_found=$([[ $TOTAL -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          
+          echo "📊 Vulnerability Summary (${{ matrix.scanner }}):"
+          echo "  Critical: $CRITICAL"
+          echo "  High: $HIGH"
+          echo "  Total: $TOTAL"
+
+      - name: 📤 Upload Scan Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-scan-results-${{ matrix.scanner }}
+          path: |
+            *-results.json
+            *-audit-results.json
+          retention-days: 30
+
+  # ============================================================================
+  # STATIC APPLICATION SECURITY TESTING (SAST)
+  # ============================================================================
+  sast-scan:
+    name: 🔍 Static Code Security Analysis
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.scan_code == 'true'
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        tool: [codeql, semgrep, eslint-security]
+      fail-fast: false
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    outputs:
+      issues_found: ${{ steps.summary.outputs.issues_found }}
+      critical_issues: ${{ steps.summary.outputs.critical_issues }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        if: matrix.tool == 'eslint-security'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Install pnpm
+        if: matrix.tool == 'eslint-security'
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        if: matrix.tool == 'eslint-security'
+        run: pnpm install --frozen-lockfile
+
+      - name: 🔍 Initialize CodeQL
+        if: matrix.tool == 'codeql'
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript, python
+          config-file: ./.github/codeql/codeql-config.yml
+          queries: security-extended,security-and-quality
+
+      - name: 🏗️ Autobuild for CodeQL
+        if: matrix.tool == 'codeql'
+        uses: github/codeql-action/autobuild@v3
+
+      - name: 🔍 Perform CodeQL Analysis
+        if: matrix.tool == 'codeql'
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
+          upload: true
+
+      - name: 🔍 Semgrep Security Scan
+        if: matrix.tool == 'semgrep'
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+            p/javascript
+            p/typescript
+            p/react
+            p/nextjs
+          generateSarif: "1"
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: 🔍 ESLint Security Scan
+        if: matrix.tool == 'eslint-security'
+        run: |
+          echo "🔍 Running ESLint Security Analysis..."
+          
+          # Install security plugins if not already present
+          pnpm add -D @typescript-eslint/eslint-plugin eslint-plugin-security eslint-plugin-react-hooks eslint-plugin-jsx-a11y
+          
+          # Create security-focused ESLint config
+          cat > .eslintrc.security.js << 'EOF'
+          module.exports = {
+            extends: [
+              'eslint:recommended',
+              '@typescript-eslint/recommended',
+              'plugin:security/recommended',
+              'plugin:react-hooks/recommended',
+              'plugin:jsx-a11y/recommended'
+            ],
+            plugins: ['security', '@typescript-eslint', 'react-hooks', 'jsx-a11y'],
+            rules: {
+              'security/detect-object-injection': 'error',
+              'security/detect-non-literal-regexp': 'error',
+              'security/detect-unsafe-regex': 'error',
+              'security/detect-buffer-noassert': 'error',
+              'security/detect-child-process': 'error',
+              'security/detect-disable-mustache-escape': 'error',
+              'security/detect-eval-with-expression': 'error',
+              'security/detect-no-csrf-before-method-override': 'error',
+              'security/detect-non-literal-fs-filename': 'error',
+              'security/detect-non-literal-require': 'error',
+              'security/detect-possible-timing-attacks': 'error',
+              'security/detect-pseudoRandomBytes': 'error'
+            }
+          };
+          EOF
+          
+          # Run ESLint with security focus
+          npx eslint . --config .eslintrc.security.js --ext .js,.jsx,.ts,.tsx --format json --output-file eslint-security-results.json || true
+          
+          # Parse and display results
+          if [ -f eslint-security-results.json ]; then
+            echo "📊 ESLint Security Results:"
+            cat eslint-security-results.json | jq -r '.[] | select(.messages | length > 0) | "\(.filePath): \(.messages | length) issues"'
+          fi
+
+      - name: 📊 Security Issues Summary
+        id: summary
+        run: |
+          TOTAL_ISSUES=0
+          CRITICAL_ISSUES=0
+          
+          # Process ESLint results
+          if [ -f eslint-security-results.json ]; then
+            ESLINT_ISSUES=$(cat eslint-security-results.json | jq '[.[].messages[]] | length')
+            ESLINT_CRITICAL=$(cat eslint-security-results.json | jq '[.[].messages[] | select(.severity == 2)] | length')
+            TOTAL_ISSUES=$((TOTAL_ISSUES + ESLINT_ISSUES))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + ESLINT_CRITICAL))
+          fi
+          
+          # Process Semgrep results
+          if [ -f semgrep.sarif ]; then
+            SEMGREP_ISSUES=$(cat semgrep.sarif | jq '.runs[0].results | length')
+            SEMGREP_CRITICAL=$(cat semgrep.sarif | jq '[.runs[0].results[] | select(.level == "error")] | length')
+            TOTAL_ISSUES=$((TOTAL_ISSUES + SEMGREP_ISSUES))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + SEMGREP_CRITICAL))
+          fi
+          
+          echo "issues_found=$([[ $TOTAL_ISSUES -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "critical_issues=$CRITICAL_ISSUES" >> $GITHUB_OUTPUT
+          
+          echo "📊 Security Issues Summary (${{ matrix.tool }}):"
+          echo "  Total Issues: $TOTAL_ISSUES"
+          echo "  Critical Issues: $CRITICAL_ISSUES"
+
+      - name: 📤 Upload SARIF Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && (matrix.tool == 'semgrep' || matrix.tool == 'codeql')
+        with:
+          sarif_file: ${{ matrix.tool == 'semgrep' && 'semgrep.sarif' || 'codeql.sarif' }}
+          category: ${{ matrix.tool }}
+
+      - name: 📤 Upload Scan Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast-scan-results-${{ matrix.tool }}
+          path: |
+            *.sarif
+            *-results.json
+            .eslintrc.security.js
+          retention-days: 30
+
+  # ============================================================================
+  # SECRETS & SENSITIVE DATA DETECTION
+  # ============================================================================
+  secrets-scan:
+    name: 🔐 Secrets & Sensitive Data Scan
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.scan_secrets == 'true'
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        tool: [trufflehog, gitleaks, detect-secrets]
+      fail-fast: false
+    outputs:
+      secrets_found: ${{ steps.summary.outputs.secrets_found }}
+      high_confidence_secrets: ${{ steps.summary.outputs.high_confidence_secrets }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 TruffleHog Secrets Scan
+        if: matrix.tool == 'trufflehog'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified --json --output trufflehog-results.json
+
+      - name: 🔍 GitLeaks Secrets Scan
+        if: matrix.tool == 'gitleaks'
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        with:
+          config-path: .gitleaks.toml
+
+      - name: 🔍 Detect-Secrets Scan
+        if: matrix.tool == 'detect-secrets'
+        run: |
+          echo "🔍 Running Detect-Secrets scan..."
+          pip install detect-secrets
+          
+          # Create baseline if it doesn't exist
+          if [ ! -f .secrets.baseline ]; then
+            detect-secrets scan --baseline .secrets.baseline
+          fi
+          
+          # Scan for new secrets
+          detect-secrets scan --baseline .secrets.baseline --force-use-all-plugins --json > detect-secrets-results.json || true
+          
+          # Audit results
+          detect-secrets audit .secrets.baseline --report --output detect-secrets-audit.json || true
+
+      - name: 🔍 Advanced Pattern Detection
+        run: |
+          echo "🔍 Running advanced pattern detection..."
+          
+          # Custom patterns for bail bond industry
+          cat > custom-patterns.txt << 'EOF'
+          # Bail Bond Industry Specific Patterns
+          (?i)(bail[_-]?bond[_-]?)(api[_-]?key|token|secret)[_-]?[:=]\s*['""']?([a-zA-Z0-9_-]{20,})['""']?
+          (?i)(surety[_-]?)(api[_-]?key|token|secret)[_-]?[:=]\s*['""']?([a-zA-Z0-9_-]{20,})['""']?
+          (?i)(court[_-]?)(api[_-]?key|token|secret)[_-]?[:=]\s*['""']?([a-zA-Z0-9_-]{20,})['""']?
+          (?i)(payment[_-]?processor[_-]?)(api[_-]?key|token|secret)[_-]?[:=]\s*['""']?([a-zA-Z0-9_-]{20,})['""']?
+          
+          # Financial & Payment Patterns
+          (?i)(stripe[_-]?)(live[_-]?|test[_-]?)?(secret[_-]?key|publishable[_-]?key)[_-]?[:=]\s*['""']?(sk_live_[a-zA-Z0-9]{99}|pk_live_[a-zA-Z0-9]{99}|sk_test_[a-zA-Z0-9]{99})['""']?
+          (?i)(paypal[_-]?)(client[_-]?id|secret)[_-]?[:=]\s*['""']?([a-zA-Z0-9_-]{50,})['""']?
+          (?i)(square[_-]?)(application[_-]?id|access[_-]?token)[_-]?[:=]\s*['""']?([a-zA-Z0-9_-]{40,})['""']?
+          
+          # Database & Infrastructure
+          (?i)(postgres|postgresql|mysql|mongodb)[_-]?(url|uri|connection[_-]?string)[_-]?[:=]\s*['""']?([a-zA-Z0-9+/=]{20,})['""']?
+          (?i)(redis[_-]?)(url|uri|password)[_-]?[:=]\s*['""']?([a-zA-Z0-9+/=]{20,})['""']?
+          
+          # JWT & Auth Tokens
+          (?i)(jwt[_-]?)(secret|key)[_-]?[:=]\s*['""']?([a-zA-Z0-9+/=]{32,})['""']?
+          (?i)(auth[_-]?)(token|key|secret)[_-]?[:=]\s*['""']?([a-zA-Z0-9+/=]{32,})['""']?
+          EOF
+          
+          # Search for custom patterns
+          grep -r -E -f custom-patterns.txt . --exclude-dir=node_modules --exclude-dir=.git --exclude="*.log" > custom-pattern-results.txt 2>/dev/null || true
+          
+          if [ -s custom-pattern-results.txt ]; then
+            echo "⚠️ Custom patterns detected:"
+            cat custom-pattern-results.txt
+          else
+            echo "✅ No custom patterns detected"
+          fi
+
+      - name: 📊 Secrets Summary
+        id: summary
+        run: |
+          TOTAL_SECRETS=0
+          HIGH_CONFIDENCE=0
+          
+          # Process TruffleHog results
+          if [ -f trufflehog-results.json ]; then
+            TRUFFLEHOG_SECRETS=$(cat trufflehog-results.json | jq '. | length')
+            TRUFFLEHOG_VERIFIED=$(cat trufflehog-results.json | jq '[.[] | select(.Verified == true)] | length')
+            TOTAL_SECRETS=$((TOTAL_SECRETS + TRUFFLEHOG_SECRETS))
+            HIGH_CONFIDENCE=$((HIGH_CONFIDENCE + TRUFFLEHOG_VERIFIED))
+          fi
+          
+          # Process GitLeaks results
+          if [ -f gitleaks-report.json ]; then
+            GITLEAKS_SECRETS=$(cat gitleaks-report.json | jq '. | length')
+            TOTAL_SECRETS=$((TOTAL_SECRETS + GITLEAKS_SECRETS))
+            HIGH_CONFIDENCE=$((HIGH_CONFIDENCE + GITLEAKS_SECRETS))
+          fi
+          
+          # Process Detect-Secrets results
+          if [ -f detect-secrets-results.json ]; then
+            DETECT_SECRETS=$(cat detect-secrets-results.json | jq '.results | to_entries | length')
+            TOTAL_SECRETS=$((TOTAL_SECRETS + DETECT_SECRETS))
+          fi
+          
+          # Process custom patterns
+          if [ -s custom-pattern-results.txt ]; then
+            CUSTOM_PATTERNS=$(wc -l < custom-pattern-results.txt)
+            TOTAL_SECRETS=$((TOTAL_SECRETS + CUSTOM_PATTERNS))
+            HIGH_CONFIDENCE=$((HIGH_CONFIDENCE + CUSTOM_PATTERNS))
+          fi
+          
+          echo "secrets_found=$([[ $TOTAL_SECRETS -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "high_confidence_secrets=$HIGH_CONFIDENCE" >> $GITHUB_OUTPUT
+          
+          echo "📊 Secrets Summary (${{ matrix.tool }}):"
+          echo "  Total Secrets: $TOTAL_SECRETS"
+          echo "  High Confidence: $HIGH_CONFIDENCE"
+
+      - name: 📤 Upload Secrets Scan Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secrets-scan-results-${{ matrix.tool }}
+          path: |
+            *-results.json
+            *-audit.json
+            gitleaks-report.json
+            custom-pattern-results.txt
+            custom-patterns.txt
+            .secrets.baseline
+          retention-days: 30
+
+  # ============================================================================
+  # License Compliance Scanning
+  # ============================================================================
+  
+  license-scan:
+    name: 📄 License Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔍 License Check
+        run: |
+          npx license-checker --json --out licenses.json
+          npx license-checker --summary
+
+      - name: 🔍 FOSSA License Scan
+        uses: fossas/fossa-action@main
+        if: github.event_name != 'pull_request'
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+
+      - name: 📋 Upload License Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: license-scan-results
+          path: licenses.json
+
+  # ============================================================================
+  # CONTAINER & INFRASTRUCTURE SECURITY
+  # ============================================================================
+  container-security:
+    name: 🐳 Container & Infrastructure Security
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.scan_infrastructure == 'true' && !github.event.inputs.skip_container_scan
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        scanner: [trivy, snyk-container, checkov]
+      fail-fast: false
+    outputs:
+      vulnerabilities_found: ${{ steps.summary.outputs.vulnerabilities_found }}
+      critical_vulnerabilities: ${{ steps.summary.outputs.critical_vulnerabilities }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Docker Buildx
+        if: matrix.scanner != 'checkov'
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🏗️ Build Docker Image
+        if: matrix.scanner != 'checkov'
+        run: |
+          echo "🏗️ Building Docker image for security scanning..."
+          
+          # Create Dockerfile if it doesn't exist
+          if [ ! -f Dockerfile ]; then
+            cat > Dockerfile << 'EOF'
+          FROM node:20-alpine AS base
+          WORKDIR /app
+          COPY package*.json pnpm-lock.yaml ./
+          RUN npm install -g pnpm && pnpm install --frozen-lockfile
+          COPY . .
+          RUN pnpm build
+          EXPOSE 3000
+          CMD ["pnpm", "start"]
+          EOF
+          fi
+          
+          docker build -t bailbondpro:security-scan .
+
+      - name: 🔍 Trivy Container Scan
+        if: matrix.scanner == 'trivy'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'bailbondpro:security-scan'
+          format: 'sarif'
+          output: 'trivy-container-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '0'
+
+      - name: 🔍 Trivy Filesystem Scan
+        if: matrix.scanner == 'trivy'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '0'
+
+      - name: 🔍 Snyk Container Scan
+        if: matrix.scanner == 'snyk-container'
+        run: |
+          echo "🔍 Running Snyk container scan..."
+          npm install -g snyk
+          
+          # Authenticate with Snyk
+          if [ -n "${{ secrets.SNYK_TOKEN }}" ]; then
+            snyk auth ${{ secrets.SNYK_TOKEN }}
+            
+            # Scan container image
+            snyk container test bailbondpro:security-scan --json --file=Dockerfile > snyk-container-results.json || true
+            
+            # Scan for infrastructure as code issues
+            snyk iac test . --json > snyk-iac-results.json || true
+          else
+            echo "⚠️ SNYK_TOKEN not available, skipping Snyk scan"
+          fi
+
+      - name: 🔍 Checkov Infrastructure Scan
+        if: matrix.scanner == 'checkov'
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile,kubernetes,terraform,github_actions
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          quiet: true
+          soft_fail: true
+
+      - name: 🔍 Docker Bench Security
+        if: matrix.scanner == 'trivy'
+        run: |
+          echo "🔍 Running Docker Bench Security..."
+          
+          # Download and run Docker Bench Security
+          git clone https://github.com/docker/docker-bench-security.git
+          cd docker-bench-security
+          
+          # Run the security benchmark
+          sudo ./docker-bench-security.sh -l docker-bench-results.log || true
+          
+          # Parse results
+          if [ -f docker-bench-results.log ]; then
+            echo "📊 Docker Bench Security Results:"
+            grep -E "(WARN|FAIL)" docker-bench-results.log | head -20 || true
+          fi
+
+      - name: 📊 Security Summary
+        id: summary
+        run: |
+          TOTAL_VULNS=0
+          CRITICAL_VULNS=0
+          
+          # Process Trivy results
+          if [ -f trivy-container-results.sarif ]; then
+            TRIVY_VULNS=$(cat trivy-container-results.sarif | jq '.runs[0].results | length')
+            TRIVY_CRITICAL=$(cat trivy-container-results.sarif | jq '[.runs[0].results[] | select(.level == "error")] | length')
+            TOTAL_VULNS=$((TOTAL_VULNS + TRIVY_VULNS))
+            CRITICAL_VULNS=$((CRITICAL_VULNS + TRIVY_CRITICAL))
+          fi
+          
+          # Process Snyk results
+          if [ -f snyk-container-results.json ]; then
+            SNYK_VULNS=$(cat snyk-container-results.json | jq '.vulnerabilities | length')
+            SNYK_CRITICAL=$(cat snyk-container-results.json | jq '[.vulnerabilities[] | select(.severity == "critical")] | length')
+            TOTAL_VULNS=$((TOTAL_VULNS + SNYK_VULNS))
+            CRITICAL_VULNS=$((CRITICAL_VULNS + SNYK_CRITICAL))
+          fi
+          
+          # Process Checkov results
+          if [ -f checkov-results.sarif ]; then
+            CHECKOV_ISSUES=$(cat checkov-results.sarif | jq '.runs[0].results | length')
+            CHECKOV_CRITICAL=$(cat checkov-results.sarif | jq '[.runs[0].results[] | select(.level == "error")] | length')
+            TOTAL_VULNS=$((TOTAL_VULNS + CHECKOV_ISSUES))
+            CRITICAL_VULNS=$((CRITICAL_VULNS + CHECKOV_CRITICAL))
+          fi
+          
+          echo "vulnerabilities_found=$([[ $TOTAL_VULNS -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "critical_vulnerabilities=$CRITICAL_VULNS" >> $GITHUB_OUTPUT
+          
+          echo "📊 Container Security Summary (${{ matrix.scanner }}):"
+          echo "  Total Vulnerabilities: $TOTAL_VULNS"
+          echo "  Critical Vulnerabilities: $CRITICAL_VULNS"
+
+      - name: 📤 Upload SARIF Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('*.sarif') != ''
+        with:
+          sarif_file: ${{ matrix.scanner }}-results.sarif
+          category: container-security-${{ matrix.scanner }}
+
+      - name: 📤 Upload Container Scan Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-security-results-${{ matrix.scanner }}
+          path: |
+            *.sarif
+            *-results.json
+            *-results.log
+            docker-bench-results.log
+            Dockerfile
+          retention-days: 30
+
+  # ============================================================================
+  # Infrastructure Security Scanning
+  # ============================================================================
+  
+  infrastructure-scan:
+    name: 🏗️ Infrastructure Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Checkov IaC Scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile,github_actions,secrets
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+
+      - name: 📊 Upload Checkov Results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+
+      - name: 🔍 Terraform Security Scan
+        if: hashFiles('**/*.tf') != ''
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          soft_fail: true
+
+  # ============================================================================
+  # WEB APPLICATION SECURITY TESTING
+  # ============================================================================
+  web-security-scan:
+    name: 🌐 Web Application Security Testing
+    runs-on: ubuntu-latest
+    needs: [preflight, container-security]
+    if: needs.preflight.outputs.scan_web == 'true'
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        tool: [zap-baseline, zap-full, nuclei, nikto]
+      fail-fast: false
+    outputs:
+      vulnerabilities_found: ${{ steps.summary.outputs.vulnerabilities_found }}
+      critical_vulnerabilities: ${{ steps.summary.outputs.critical_vulnerabilities }}
+    services:
+      app:
+        image: node:20-alpine
+        ports:
+          - 3000:3000
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install pnpm
+        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🏗️ Build Application
+        run: |
+          echo "🏗️ Building application for security testing..."
+          pnpm build
+
+      - name: 🚀 Start Application
+        run: |
+          echo "🚀 Starting application in background..."
+          pnpm start &
+          
+          # Wait for application to be ready
+          timeout 60 bash -c 'until curl -f http://localhost:3000/health || curl -f http://localhost:3000; do sleep 2; done'
+          
+          echo "✅ Application is ready for security testing"
+
+      - name: 🔍 OWASP ZAP Baseline Scan
+        if: matrix.tool == 'zap-baseline'
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://localhost:3000'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j -m 10 -T 60'
+
+      - name: 🔍 OWASP ZAP Full Scan
+        if: matrix.tool == 'zap-full'
+        uses: zaproxy/action-full-scan@v0.8.0
+        with:
+          target: 'http://localhost:3000'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j -m 10 -T 120'
+
+      - name: 🔍 Nuclei Vulnerability Scan
+        if: matrix.tool == 'nuclei'
+        run: |
+          echo "🔍 Running Nuclei vulnerability scan..."
+          
+          # Install Nuclei
+          go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          
+          # Update templates
+          nuclei -update-templates
+          
+          # Run comprehensive scan
+          nuclei -u http://localhost:3000 \
+            -t cves/ \
+            -t vulnerabilities/ \
+            -t exposures/ \
+            -t misconfiguration/ \
+            -t default-logins/ \
+            -severity critical,high,medium \
+            -json -o nuclei-results.json \
+            -stats -silent
+
+      - name: 🔍 Nikto Web Scanner
+        if: matrix.tool == 'nikto'
+        run: |
+          echo "🔍 Running Nikto web vulnerability scan..."
+          
+          # Install Nikto
+          sudo apt-get update && sudo apt-get install -y nikto
+          
+          # Run Nikto scan
+          nikto -h http://localhost:3000 \
+            -Format json \
+            -output nikto-results.json \
+            -maxtime 600 \
+            -Plugins "@@ALL" || true
+
+      - name: 🔍 Custom Security Tests
+        run: |
+          echo "🔍 Running custom security tests..."
+          
+          # Test for common vulnerabilities
+          cat > security-tests.sh << 'EOF'
+          #!/bin/bash
+          
+          BASE_URL="http://localhost:3000"
+          RESULTS_FILE="custom-security-results.json"
+          
+          echo '{"tests": [' > $RESULTS_FILE
+          
+          # Test for SQL Injection
+          echo "Testing SQL Injection..."
+          SQLI_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/search?q=' OR 1=1--")
+          echo '{"test": "sql_injection", "status": "'$SQLI_RESPONSE'", "vulnerable": '$([ "$SQLI_RESPONSE" != "400" ] && echo "true" || echo "false")'},' >> $RESULTS_FILE
+          
+          # Test for XSS
+          echo "Testing XSS..."
+          XSS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/search?q=<script>alert('xss')</script>")
+          echo '{"test": "xss", "status": "'$XSS_RESPONSE'", "vulnerable": '$([ "$XSS_RESPONSE" != "400" ] && echo "true" || echo "false")'},' >> $RESULTS_FILE
+          
+          # Test for Directory Traversal
+          echo "Testing Directory Traversal..."
+          DT_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/../../../etc/passwd")
+          echo '{"test": "directory_traversal", "status": "'$DT_RESPONSE'", "vulnerable": '$([ "$DT_RESPONSE" == "200" ] && echo "true" || echo "false")'},' >> $RESULTS_FILE
+          
+          # Test for CSRF
+          echo "Testing CSRF protection..."
+          CSRF_RESPONSE=$(curl -s -X POST -o /dev/null -w "%{http_code}" "$BASE_URL/api/users" -d '{"name":"test"}' -H "Content-Type: application/json")
+          echo '{"test": "csrf", "status": "'$CSRF_RESPONSE'", "vulnerable": '$([ "$CSRF_RESPONSE" == "200" ] && echo "true" || echo "false")'}' >> $RESULTS_FILE
+          
+          echo ']}' >> $RESULTS_FILE
+          EOF
+          
+          chmod +x security-tests.sh
+          ./security-tests.sh
+
+      - name: 📊 Security Summary
+        id: summary
+        run: |
+          TOTAL_VULNS=0
+          CRITICAL_VULNS=0
+          
+          # Process ZAP results
+          if [ -f report_json.json ]; then
+            ZAP_ALERTS=$(cat report_json.json | jq '.site[0].alerts | length')
+            ZAP_HIGH=$(cat report_json.json | jq '[.site[0].alerts[] | select(.riskdesc | contains("High"))] | length')
+            TOTAL_VULNS=$((TOTAL_VULNS + ZAP_ALERTS))
+            CRITICAL_VULNS=$((CRITICAL_VULNS + ZAP_HIGH))
+          fi
+          
+          # Process Nuclei results
+          if [ -f nuclei-results.json ]; then
+            NUCLEI_VULNS=$(cat nuclei-results.json | wc -l)
+            NUCLEI_CRITICAL=$(cat nuclei-results.json | jq -r 'select(.info.severity == "critical" or .info.severity == "high")' | wc -l)
+            TOTAL_VULNS=$((TOTAL_VULNS + NUCLEI_VULNS))
+            CRITICAL_VULNS=$((CRITICAL_VULNS + NUCLEI_CRITICAL))
+          fi
+          
+          # Process Nikto results
+          if [ -f nikto-results.json ]; then
+            NIKTO_VULNS=$(cat nikto-results.json | jq '.vulnerabilities | length')
+            TOTAL_VULNS=$((TOTAL_VULNS + NIKTO_VULNS))
+          fi
+          
+          # Process custom tests
+          if [ -f custom-security-results.json ]; then
+            CUSTOM_VULNS=$(cat custom-security-results.json | jq '[.tests[] | select(.vulnerable == true)] | length')
+            TOTAL_VULNS=$((TOTAL_VULNS + CUSTOM_VULNS))
+            CRITICAL_VULNS=$((CRITICAL_VULNS + CUSTOM_VULNS))
+          fi
+          
+          echo "vulnerabilities_found=$([[ $TOTAL_VULNS -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "critical_vulnerabilities=$CRITICAL_VULNS" >> $GITHUB_OUTPUT
+          
+          echo "📊 Web Security Summary (${{ matrix.tool }}):"
+          echo "  Total Vulnerabilities: $TOTAL_VULNS"
+          echo "  Critical Vulnerabilities: $CRITICAL_VULNS"
+
+      - name: 📤 Upload Web Security Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-security-results-${{ matrix.tool }}
+          path: |
+            report_*.json
+            report_*.html
+            nuclei-results.json
+            nikto-results.json
+            custom-security-results.json
+            security-tests.sh
+          retention-days: 30
+
+  # ============================================================================
+  # ADVANCED THREAT DETECTION & MONITORING
+  # ============================================================================
+  threat-detection:
+    name: 🚨 Advanced Threat Detection
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.scan_threats == 'true'
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        detector: [secrets-advanced, malware, supply-chain]
+      fail-fast: false
+    outputs:
+      threats_found: ${{ steps.summary.outputs.threats_found }}
+      critical_threats: ${{ steps.summary.outputs.critical_threats }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Advanced Secret Pattern Detection
+        if: matrix.detector == 'secrets-advanced'
+        run: |
+          echo "🔍 Scanning for advanced secret patterns..."
+          
+          # Custom patterns for bail bond industry
+          echo "Scanning for industry-specific sensitive patterns..."
+          
+          # SSN patterns
+          grep -r -E "\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b" . --exclude-dir=.git --exclude-dir=node_modules --exclude="*.log" || true
+          
+          # License numbers (various formats)
+          grep -r -E "\b[A-Z]{2}\d{6,8}\b|\b[A-Z]\d{7,9}\b" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Bond amounts and financial data
+          grep -r -i "bond.*amount\|premium.*amount\|collateral.*value" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Court case numbers
+          grep -r -E "\b\d{2,4}-[A-Z]{2,4}-\d{4,6}\b" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Credit card patterns
+          grep -r -E "\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Bank account patterns
+          grep -r -E "\b\d{9,12}\b.*account|\baccount.*\d{9,12}\b" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # API keys and tokens
+          grep -r -E "api[_-]?key|secret[_-]?key|access[_-]?token|bearer[_-]?token" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Database connection strings
+          grep -r -E "mongodb://|mysql://|postgres://|redis://.*@" . --exclude-dir=.git --exclude-dir=node_modules || true
+
+      - name: 🔍 Malware & Backdoor Detection
+        if: matrix.detector == 'malware'
+        run: |
+          echo "🔍 Scanning for malware and backdoor patterns..."
+          
+          # Suspicious JavaScript patterns
+          find . -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" | \
+            xargs grep -l "eval\|Function.*string\|setTimeout.*string\|setInterval.*string" || true
+          
+          # DOM manipulation vulnerabilities
+          find . -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" | \
+            xargs grep -l "document\.write\|innerHTML.*\+\|outerHTML.*\+" || true
+          
+          # Suspicious network requests
+          find . -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" | \
+            xargs grep -l "XMLHttpRequest.*eval\|fetch.*eval\|axios.*eval" || true
+          
+          # Base64 encoded suspicious content
+          find . -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" | \
+            xargs grep -l "atob\|btoa.*eval\|fromCharCode" || true
+          
+          # Obfuscated code patterns
+          find . -name "*.js" -o -name "*.ts" | \
+            xargs grep -E "\\\\x[0-9a-fA-F]{2}|\\\\u[0-9a-fA-F]{4}" || true
+          
+          # Suspicious file operations
+          find . -name "*.js" -o -name "*.ts" -o -name "*.py" | \
+            xargs grep -l "fs\.writeFile.*eval\|os\.system\|subprocess\.call" || true
+
+      - name: 🔍 Supply Chain Attack Detection
+        if: matrix.detector == 'supply-chain'
+        run: |
+          echo "🔍 Scanning for supply chain attack indicators..."
+          
+          # Check for suspicious package.json modifications
+          if [ -f package.json ]; then
+            echo "Analyzing package.json for suspicious dependencies..."
+            
+            # Check for packages with suspicious names
+            cat package.json | jq -r '.dependencies // {} | keys[]' | \
+              grep -E "test|temp|tmp|debug|dev|admin|root|hack|exploit" || true
+            
+            # Check for packages with version ranges that could be exploited
+            cat package.json | jq -r '.dependencies // {} | to_entries[] | select(.value | contains("*") or contains("^") or contains("~")) | .key + ": " + .value'
+          fi
+          
+          # Check for suspicious scripts in package.json
+          if [ -f package.json ]; then
+            cat package.json | jq -r '.scripts // {} | to_entries[] | select(.value | contains("curl") or contains("wget") or contains("eval") or contains("rm -rf")) | .key + ": " + .value' || true
+          fi
+          
+          # Check for suspicious files in node_modules (if present)
+          if [ -d node_modules ]; then
+            find node_modules -name "*.sh" -o -name "*.bat" -o -name "*.exe" | head -10 || true
+          fi
+          
+          # Check for typosquatting in dependencies
+          if [ -f package.json ]; then
+            echo "Checking for potential typosquatting..."
+            cat package.json | jq -r '.dependencies // {} | keys[]' | \
+              grep -E "react-dom|lodash|express|axios|moment" | \
+              grep -v -E "^(react-dom|lodash|express|axios|moment)$" || true
+          fi
+          
+          # Check for suspicious environment variable usage
+          find . -name "*.js" -o -name "*.ts" -o -name "*.py" | \
+            xargs grep -l "process\.env\[.*\]\|os\.environ\[.*\]" | \
+            head -5 || true
+
+      - name: 🔍 Git History Analysis
+        run: |
+          echo "🔍 Analyzing Git history for suspicious patterns..."
+          
+          # Check for large files that might contain malicious content
+          git log --all --full-history --pretty=format:"%H %s" -- | head -20 || true
+          
+          # Check for commits with suspicious messages
+          git log --oneline --all | grep -i -E "hack|exploit|backdoor|malware|virus|trojan" || true
+          
+          # Check for commits that add executable files
+          git log --name-status --all | grep -E "^A.*\.(sh|bat|exe|bin)$" || true
+          
+          # Check for large binary files
+          git log --all --numstat | awk '$1 == "-" && $2 == "-" {print $3}' | head -10 || true
+
+      - name: 📊 Threat Summary
+        id: summary
+        run: |
+          TOTAL_THREATS=0
+          CRITICAL_THREATS=0
+          
+          # Count threats based on detector type
+          case "${{ matrix.detector }}" in
+            "secrets-advanced")
+              # Count secret patterns found
+              SECRET_COUNT=$(grep -r -E "\b\d{3}-\d{2}-\d{4}\b|\bapi[_-]?key\b" . --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null | wc -l || echo "0")
+              TOTAL_THREATS=$((TOTAL_THREATS + SECRET_COUNT))
+              CRITICAL_THREATS=$((CRITICAL_THREATS + SECRET_COUNT))
+              ;;
+            "malware")
+              # Count malware patterns
+              MALWARE_COUNT=$(find . -name "*.js" -o -name "*.ts" | xargs grep -l "eval\|Function.*string" 2>/dev/null | wc -l || echo "0")
+              TOTAL_THREATS=$((TOTAL_THREATS + MALWARE_COUNT))
+              CRITICAL_THREATS=$((CRITICAL_THREATS + MALWARE_COUNT))
+              ;;
+            "supply-chain")
+              # Count supply chain issues
+              if [ -f package.json ]; then
+                SUPPLY_COUNT=$(cat package.json | jq -r '.dependencies // {} | keys[]' | grep -E "test|temp|tmp" | wc -l || echo "0")
+                TOTAL_THREATS=$((TOTAL_THREATS + SUPPLY_COUNT))
+              fi
+              ;;
+          esac
+          
+          echo "threats_found=$([[ $TOTAL_THREATS -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "critical_threats=$CRITICAL_THREATS" >> $GITHUB_OUTPUT
+          
+          echo "📊 Threat Detection Summary (${{ matrix.detector }}):"
+          echo "  Total Threats: $TOTAL_THREATS"
+          echo "  Critical Threats: $CRITICAL_THREATS"
+
+      - name: 📤 Upload Threat Detection Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: threat-detection-results-${{ matrix.detector }}
+          path: |
+            threat-*.log
+            malware-*.log
+            secrets-*.log
+            supply-chain-*.log
+          retention-days: 30
+
+      - name: 🔍 Supply Chain Attack Detection
+        run: |
+          # Check for suspicious package installations
+          if [ -f "package.json" ]; then
+            jq -r '.dependencies, .devDependencies | keys[]' package.json | sort | uniq > current-deps.txt
+            # Compare with known good baseline (if exists)
+            if [ -f ".security/approved-deps.txt" ]; then
+              comm -13 .security/approved-deps.txt current-deps.txt > new-deps.txt
+              if [ -s new-deps.txt ]; then
+                echo "⚠️ New dependencies detected:"
+                cat new-deps.txt
+              fi
+            fi
+          fi
+
+  # ============================================================================
+  # COMPLIANCE & REGULATORY SCANNING
+  # ============================================================================
+  
+  compliance-scan:
+    name: ⚖️ Compliance & Regulatory Scan
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.scan_compliance == 'true'
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        compliance: [gdpr, pci-dss, bail-bond-industry, accessibility, data-protection]
+      fail-fast: false
+    outputs:
+      compliance_score: ${{ steps.summary.outputs.compliance_score }}
+      violations_found: ${{ steps.summary.outputs.violations_found }}
+      critical_violations: ${{ steps.summary.outputs.critical_violations }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 🔧 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pip install bandit safety
+
+      - name: ⚖️ GDPR Compliance Check
+        if: matrix.compliance == 'gdpr'
+        run: |
+          echo "🔍 Scanning for GDPR compliance violations..."
+          
+          # Check for data collection without consent
+          find . -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" | \
+            xargs grep -l "localStorage\|sessionStorage\|document\.cookie" | \
+            head -10 || true
+          
+          # Check for personal data processing
+          find . -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" | \
+            xargs grep -i -l "email\|phone\|address\|ssn\|personal.*data" | \
+            head -10 || true
+          
+          # Check for data retention policies
+          grep -r -i "data.*retention\|delete.*after\|expire.*data" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for privacy policy references
+          grep -r -i "privacy.*policy\|data.*protection\|gdpr" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for consent management
+          grep -r -i "consent\|cookie.*banner\|opt.*in\|opt.*out" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for data subject rights implementation
+          grep -r -i "right.*to.*be.*forgotten\|data.*portability\|access.*request" . --exclude-dir=.git --exclude-dir=node_modules || true
+
+      - name: 💳 PCI DSS Compliance Check
+        if: matrix.compliance == 'pci-dss'
+        run: |
+          echo "🔍 Scanning for PCI DSS compliance violations..."
+          
+          # Check for credit card data handling
+          find . -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" | \
+            xargs grep -E "\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b|cvv|cvc|card.*number" || true
+          
+          # Check for payment processing security
+          grep -r -i "payment\|stripe\|paypal\|credit.*card\|debit.*card" . --exclude-dir=.git --exclude-dir=node_modules | \
+            grep -v -i "test\|mock\|example" || true
+          
+          # Check for encryption of cardholder data
+          grep -r -i "encrypt.*card\|card.*encrypt\|tokenize.*payment" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for secure transmission
+          grep -r -E "http://.*payment|http://.*card|http://.*billing" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for access controls
+          grep -r -i "card.*access\|payment.*role\|billing.*permission" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for logging and monitoring
+          grep -r -i "payment.*log\|card.*audit\|transaction.*monitor" . --exclude-dir=.git --exclude-dir=node_modules || true
+
+      - name: 🏛️ Bail Bond Industry Compliance
+        if: matrix.compliance == 'bail-bond-industry'
+        run: |
+          echo "🔍 Scanning for bail bond industry compliance..."
+          
+          # Check for licensing compliance
+          grep -r -i "license.*number\|bail.*license\|surety.*license" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for bond amount calculations
+          grep -r -i "bond.*amount\|premium.*calculation\|fee.*structure" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for collateral handling
+          grep -r -i "collateral\|security.*deposit\|asset.*valuation" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for court integration
+          grep -r -i "court.*system\|case.*number\|hearing.*date" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for defendant tracking
+          grep -r -i "defendant.*location\|gps.*tracking\|check.*in" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for regulatory reporting
+          grep -r -i "regulatory.*report\|compliance.*report\|audit.*trail" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for FCRA compliance (Fair Credit Reporting Act)
+          grep -r -i "fcra\|credit.*report\|background.*check\|adverse.*action" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for state-specific regulations
+          grep -r -i "state.*regulation\|jurisdiction\|interstate.*bond" . --exclude-dir=.git --exclude-dir=node_modules || true
+
+      - name: ♿ Accessibility Compliance (WCAG 2.1 AA)
+        if: matrix.compliance == 'accessibility'
+        run: |
+          echo "🔍 Scanning for accessibility compliance..."
+          
+          # Check for alt text on images
+          find . -name "*.jsx" -o -name "*.tsx" -o -name "*.html" | \
+            xargs grep -l "<img" | \
+            xargs grep -L "alt=" || true
+          
+          # Check for proper heading structure
+          find . -name "*.jsx" -o -name "*.tsx" -o -name "*.html" | \
+            xargs grep -E "<h[1-6]" || true
+          
+          # Check for form labels
+          find . -name "*.jsx" -o -name "*.tsx" -o -name "*.html" | \
+            xargs grep -l "<input\|<select\|<textarea" | \
+            xargs grep -L "aria-label\|<label" || true
+          
+          # Check for keyboard navigation
+          find . -name "*.jsx" -o -name "*.tsx" -o -name "*.js" -o -name "*.ts" | \
+            xargs grep -l "onClick\|onMouseOver" | \
+            xargs grep -L "onKeyDown\|onKeyPress\|tabIndex" || true
+          
+          # Check for color contrast considerations
+          find . -name "*.css" -o -name "*.scss" -o -name "*.js" -o -name "*.ts" | \
+            xargs grep -i "color\|background" | \
+            grep -E "#[0-9a-fA-F]{3,6}" | head -10 || true
+          
+          # Check for ARIA attributes
+          find . -name "*.jsx" -o -name "*.tsx" -o -name "*.html" | \
+            xargs grep -E "aria-|role=" || true
+
+      - name: 🔒 Data Protection Compliance
+        if: matrix.compliance == 'data-protection'
+        run: |
+          echo "🔍 Scanning for data protection compliance..."
+          
+          # Check for data encryption at rest
+          grep -r -i "encrypt\|cipher\|hash\|bcrypt\|scrypt" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for secure data transmission
+          grep -r -E "https://|ssl|tls|certificate" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for data anonymization
+          grep -r -i "anonymize\|pseudonymize\|mask.*data\|redact" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for data backup and recovery
+          grep -r -i "backup\|restore\|recovery\|disaster.*recovery" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for access logging
+          grep -r -i "access.*log\|audit.*log\|user.*activity" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for data classification
+          grep -r -i "sensitive.*data\|confidential\|restricted\|public.*data" . --exclude-dir=.git --exclude-dir=node_modules || true
+          
+          # Check for data minimization
+          grep -r -i "data.*minimization\|collect.*necessary\|purpose.*limitation" . --exclude-dir=.git --exclude-dir=node_modules || true
+
+      - name: 📊 Compliance Summary
+        id: summary
+        run: |
+          VIOLATIONS=0
+          CRITICAL_VIOLATIONS=0
+          COMPLIANCE_SCORE=100
+          
+          # Calculate compliance score based on findings
+          case "${{ matrix.compliance }}" in
+            "gdpr")
+              # Check for GDPR violations
+              GDPR_VIOLATIONS=$(find . -name "*.js" -o -name "*.ts" | xargs grep -l "localStorage\|sessionStorage" 2>/dev/null | wc -l || echo "0")
+              VIOLATIONS=$((VIOLATIONS + GDPR_VIOLATIONS))
+              CRITICAL_VIOLATIONS=$((CRITICAL_VIOLATIONS + GDPR_VIOLATIONS))
+              ;;
+            "pci-dss")
+              # Check for PCI DSS violations
+              PCI_VIOLATIONS=$(find . -name "*.js" -o -name "*.ts" | xargs grep -E "\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b" 2>/dev/null | wc -l || echo "0")
+              VIOLATIONS=$((VIOLATIONS + PCI_VIOLATIONS))
+              CRITICAL_VIOLATIONS=$((CRITICAL_VIOLATIONS + PCI_VIOLATIONS))
+              ;;
+            "bail-bond-industry")
+              # Check for industry-specific violations
+              INDUSTRY_VIOLATIONS=$(grep -r -i "license.*number" . --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null | wc -l || echo "0")
+              VIOLATIONS=$((VIOLATIONS + INDUSTRY_VIOLATIONS))
+              ;;
+            "accessibility")
+              # Check for accessibility violations
+              A11Y_VIOLATIONS=$(find . -name "*.jsx" -o -name "*.tsx" | xargs grep -l "<img" | xargs grep -L "alt=" 2>/dev/null | wc -l || echo "0")
+              VIOLATIONS=$((VIOLATIONS + A11Y_VIOLATIONS))
+              ;;
+            "data-protection")
+              # Check for data protection violations
+              DATA_VIOLATIONS=$(grep -r -E "http://.*password|http://.*token" . --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null | wc -l || echo "0")
+              VIOLATIONS=$((VIOLATIONS + DATA_VIOLATIONS))
+              CRITICAL_VIOLATIONS=$((CRITICAL_VIOLATIONS + DATA_VIOLATIONS))
+              ;;
+          esac
+          
+          # Calculate compliance score (100 - violations * 5, minimum 0)
+          COMPLIANCE_SCORE=$((100 - VIOLATIONS * 5))
+          if [ $COMPLIANCE_SCORE -lt 0 ]; then
+            COMPLIANCE_SCORE=0
+          fi
+          
+          echo "compliance_score=$COMPLIANCE_SCORE" >> $GITHUB_OUTPUT
+          echo "violations_found=$VIOLATIONS" >> $GITHUB_OUTPUT
+          echo "critical_violations=$CRITICAL_VIOLATIONS" >> $GITHUB_OUTPUT
+          
+          echo "📊 Compliance Summary (${{ matrix.compliance }}):"
+          echo "  Compliance Score: $COMPLIANCE_SCORE%"
+          echo "  Total Violations: $VIOLATIONS"
+          echo "  Critical Violations: $CRITICAL_VIOLATIONS"
+
+      - name: 📋 Generate Compliance Report
+        run: |
+          mkdir -p compliance-reports
+          
+          cat > compliance-reports/compliance-report-${{ matrix.compliance }}.md << EOF
+          # Compliance Report: ${{ matrix.compliance }}
+          
+          **Generated:** $(date)
+          **Compliance Type:** ${{ matrix.compliance }}
+          **Score:** ${{ steps.summary.outputs.compliance_score }}%
+          **Violations:** ${{ steps.summary.outputs.violations_found }}
+          **Critical Violations:** ${{ steps.summary.outputs.critical_violations }}
+          
+          ## Summary
+          
+          This report contains the compliance scan results for ${{ matrix.compliance }} regulations.
+          
+          ### Recommendations
+          
+          EOF
+          
+          # Add specific recommendations based on compliance type
+          case "${{ matrix.compliance }}" in
+            "gdpr")
+              echo "- Implement proper consent management" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Add privacy policy and data protection notices" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Implement data subject rights (access, deletion, portability)" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              ;;
+            "pci-dss")
+              echo "- Never store credit card data in plain text" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Use secure payment processors (Stripe, PayPal)" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Implement proper access controls for payment data" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              ;;
+            "bail-bond-industry")
+              echo "- Ensure proper licensing verification" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Implement FCRA-compliant background checks" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Add regulatory reporting capabilities" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              ;;
+            "accessibility")
+              echo "- Add alt text to all images" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Ensure proper keyboard navigation" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Implement ARIA attributes for screen readers" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              ;;
+            "data-protection")
+              echo "- Encrypt sensitive data at rest and in transit" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Implement proper access logging and monitoring" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              echo "- Add data anonymization and pseudonymization" >> compliance-reports/compliance-report-${{ matrix.compliance }}.md
+              ;;
+          esac
+
+      - name: 📤 Upload Compliance Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compliance-report-${{ matrix.compliance }}
+          path: |
+            compliance-reports/
+            compliance-*.json
+            compliance-*.log
+          retention-days: 90
+
+  # ============================================================================
+  # SECURITY MONITORING & ALERTING
+  # ============================================================================
+  
+  security-monitoring:
+    name: 📊 Security Monitoring & Alerting
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, sast-scan, secrets-scan, container-security, web-security, threat-detection, compliance-scan]
+    if: always()
+    timeout-minutes: 10
+    outputs:
+      security_score: ${{ steps.security-evaluation.outputs.security_score }}
+      security_status: ${{ steps.security-evaluation.outputs.security_status }}
+      critical_issues: ${{ steps.security-evaluation.outputs.critical_issues }}
+      total_vulnerabilities: ${{ steps.security-evaluation.outputs.total_vulnerabilities }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📊 Comprehensive Security Evaluation
+        id: security-evaluation
+        run: |
+          echo "🔍 Evaluating comprehensive security posture..."
+          
+          # Initialize scoring variables
+          SCORE=100
+          CRITICAL_ISSUES=0
+          TOTAL_VULNERABILITIES=0
+          SECURITY_ISSUES=()
+          
+          # Dependency scan evaluation
+          if [[ "${{ needs.dependency-scan.result }}" == "failure" ]]; then
+            SCORE=$((SCORE - 25))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + 1))
+            SECURITY_ISSUES+=("Dependency vulnerabilities detected")
+            echo "❌ Dependency scan failed - Critical security risk"
+          elif [[ "${{ needs.dependency-scan.result }}" == "success" ]]; then
+            echo "✅ Dependency scan passed"
+            # Extract vulnerability counts if available
+            DEP_VULNS="${{ needs.dependency-scan.outputs.vulnerability_count || '0' }}"
+            TOTAL_VULNERABILITIES=$((TOTAL_VULNERABILITIES + DEP_VULNS))
+          fi
+          
+          # SAST scan evaluation
+          if [[ "${{ needs.sast-scan.result }}" == "failure" ]]; then
+            SCORE=$((SCORE - 20))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + 1))
+            SECURITY_ISSUES+=("Static analysis security issues found")
+            echo "❌ SAST scan failed - Code security issues detected"
+          elif [[ "${{ needs.sast-scan.result }}" == "success" ]]; then
+            echo "✅ SAST scan passed"
+            SAST_VULNS="${{ needs.sast-scan.outputs.vulnerability_count || '0' }}"
+            TOTAL_VULNERABILITIES=$((TOTAL_VULNERABILITIES + SAST_VULNS))
+          fi
+          
+          # Secrets scan evaluation
+          if [[ "${{ needs.secrets-scan.result }}" == "failure" ]]; then
+            SCORE=$((SCORE - 30))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + 1))
+            SECURITY_ISSUES+=("Secrets or credentials exposed")
+            echo "❌ Secrets scan failed - Exposed credentials detected"
+          elif [[ "${{ needs.secrets-scan.result }}" == "success" ]]; then
+            echo "✅ Secrets scan passed"
+            SECRET_COUNT="${{ needs.secrets-scan.outputs.secrets_found || '0' }}"
+            TOTAL_VULNERABILITIES=$((TOTAL_VULNERABILITIES + SECRET_COUNT))
+          fi
+          
+          # Container security evaluation
+          if [[ "${{ needs.container-security.result }}" == "failure" ]]; then
+            SCORE=$((SCORE - 15))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + 1))
+            SECURITY_ISSUES+=("Container security vulnerabilities")
+            echo "❌ Container security scan failed"
+          elif [[ "${{ needs.container-security.result }}" == "success" ]]; then
+            echo "✅ Container security scan passed"
+            CONTAINER_VULNS="${{ needs.container-security.outputs.vulnerability_count || '0' }}"
+            TOTAL_VULNERABILITIES=$((TOTAL_VULNERABILITIES + CONTAINER_VULNS))
+          fi
+          
+          # Web security evaluation
+          if [[ "${{ needs.web-security.result }}" == "failure" ]]; then
+            SCORE=$((SCORE - 15))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + 1))
+            SECURITY_ISSUES+=("Web application security issues")
+            echo "❌ Web security scan failed"
+          elif [[ "${{ needs.web-security.result }}" == "success" ]]; then
+            echo "✅ Web security scan passed"
+            WEB_VULNS="${{ needs.web-security.outputs.vulnerability_count || '0' }}"
+            TOTAL_VULNERABILITIES=$((TOTAL_VULNERABILITIES + WEB_VULNS))
+          fi
+          
+          # Threat detection evaluation
+          if [[ "${{ needs.threat-detection.result }}" == "failure" ]]; then
+            SCORE=$((SCORE - 20))
+            CRITICAL_ISSUES=$((CRITICAL_ISSUES + 1))
+            SECURITY_ISSUES+=("Advanced threats detected")
+            echo "❌ Threat detection failed - Advanced threats found"
+          elif [[ "${{ needs.threat-detection.result }}" == "success" ]]; then
+            echo "✅ Threat detection passed"
+            THREAT_COUNT="${{ needs.threat-detection.outputs.threats_found || '0' }}"
+            TOTAL_VULNERABILITIES=$((TOTAL_VULNERABILITIES + THREAT_COUNT))
+          fi
+          
+          # Compliance evaluation
+          if [[ "${{ needs.compliance-scan.result }}" == "failure" ]]; then
+            SCORE=$((SCORE - 10))
+            SECURITY_ISSUES+=("Compliance violations detected")
+            echo "❌ Compliance scan failed"
+          elif [[ "${{ needs.compliance-scan.result }}" == "success" ]]; then
+            echo "✅ Compliance scan passed"
+            COMPLIANCE_VIOLATIONS="${{ needs.compliance-scan.outputs.critical_violations || '0' }}"
+            if [ "$COMPLIANCE_VIOLATIONS" -gt 0 ]; then
+              CRITICAL_ISSUES=$((CRITICAL_ISSUES + COMPLIANCE_VIOLATIONS))
+            fi
+          fi
+          
+          # Determine security status
+          if [ $SCORE -lt 60 ]; then
+            SECURITY_STATUS="critical"
+            STATUS_EMOJI="🚨"
+            STATUS_TEXT="CRITICAL - Immediate Action Required"
+          elif [ $SCORE -lt 75 ]; then
+            SECURITY_STATUS="high"
+            STATUS_EMOJI="⚠️"
+            STATUS_TEXT="HIGH RISK - Review Required"
+          elif [ $SCORE -lt 85 ]; then
+            SECURITY_STATUS="medium"
+            STATUS_EMOJI="⚠️"
+            STATUS_TEXT="MEDIUM RISK - Monitor Closely"
+          elif [ $SCORE -lt 95 ]; then
+            SECURITY_STATUS="low"
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="LOW RISK - Good Security Posture"
+          else
+            SECURITY_STATUS="excellent"
+            STATUS_EMOJI="🛡️"
+            STATUS_TEXT="EXCELLENT - Outstanding Security"
+          fi
+          
+          # Output results
+          echo "security_score=$SCORE" >> $GITHUB_OUTPUT
+          echo "security_status=$SECURITY_STATUS" >> $GITHUB_OUTPUT
+          echo "critical_issues=$CRITICAL_ISSUES" >> $GITHUB_OUTPUT
+          echo "total_vulnerabilities=$TOTAL_VULNERABILITIES" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "📊 COMPREHENSIVE SECURITY EVALUATION RESULTS"
+          echo "=============================================="
+          echo "$STATUS_EMOJI Security Score: $SCORE/100"
+          echo "🎯 Security Status: $STATUS_TEXT"
+          echo "🚨 Critical Issues: $CRITICAL_ISSUES"
+          echo "🔍 Total Vulnerabilities: $TOTAL_VULNERABILITIES"
+          echo ""
+          
+          if [ ${#SECURITY_ISSUES[@]} -gt 0 ]; then
+            echo "🔍 Security Issues Found:"
+            for issue in "${SECURITY_ISSUES[@]}"; do
+              echo "  - $issue"
+            done
+            echo ""
+          fi
+
+      - name: 🚨 Critical Security Alert
+        if: steps.security-evaluation.outputs.security_status == 'critical'
+        run: |
+          echo "🚨 CRITICAL SECURITY ALERT - Immediate action required!"
+          echo "Security Score: ${{ steps.security-evaluation.outputs.security_score }}/100"
+          echo "Critical Issues: ${{ steps.security-evaluation.outputs.critical_issues }}"
+          
+          # Send webhook notification if configured
+          if [ -n "${{ secrets.SECURITY_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "🚨 CRITICAL SECURITY ALERT",
+                "attachments": [
+                  {
+                    "color": "danger",
+                    "fields": [
+                      {"title": "Repository", "value": "${{ github.repository }}", "short": true},
+                      {"title": "Security Score", "value": "${{ steps.security-evaluation.outputs.security_score }}/100", "short": true},
+                      {"title": "Critical Issues", "value": "${{ steps.security-evaluation.outputs.critical_issues }}", "short": true},
+                      {"title": "Total Vulnerabilities", "value": "${{ steps.security-evaluation.outputs.total_vulnerabilities }}", "short": true},
+                      {"title": "Status", "value": "CRITICAL - Immediate Action Required", "short": false},
+                      {"title": "Workflow", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+                    ]
+                  }
+                ]
+              }' \
+              ${{ secrets.SECURITY_WEBHOOK_URL }}
+          fi
+          
+          # Create GitHub issue for critical security findings
+          if [ -n "${{ secrets.GITHUB_TOKEN }}" ]; then
+            gh issue create \
+              --title "🚨 Critical Security Alert - Score: ${{ steps.security-evaluation.outputs.security_score }}/100" \
+              --body "## Critical Security Issues Detected
+
+          **Security Score:** ${{ steps.security-evaluation.outputs.security_score }}/100
+          **Critical Issues:** ${{ steps.security-evaluation.outputs.critical_issues }}
+          **Total Vulnerabilities:** ${{ steps.security-evaluation.outputs.total_vulnerabilities }}
+
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Please review the security scan results and address critical issues immediately.
+
+          ### Next Steps:
+          1. Review the workflow logs for detailed findings
+          2. Download security reports from the workflow artifacts
+          3. Address critical vulnerabilities first
+          4. Re-run security scans after fixes
+
+          **Auto-generated by Security Monitoring Workflow**" \
+              --label "security,critical,bug" \
+              --assignee "${{ github.actor }}"
+          fi
+
+      - name: ⚠️ High Risk Security Alert
+        if: steps.security-evaluation.outputs.security_status == 'high'
+        run: |
+          echo "⚠️ HIGH RISK SECURITY ALERT - Review required!"
+          echo "Security Score: ${{ steps.security-evaluation.outputs.security_score }}/100"
+          
+          if [ -n "${{ secrets.SECURITY_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "⚠️ High Risk Security Alert",
+                "attachments": [
+                  {
+                    "color": "warning",
+                    "fields": [
+                      {"title": "Repository", "value": "${{ github.repository }}", "short": true},
+                      {"title": "Security Score", "value": "${{ steps.security-evaluation.outputs.security_score }}/100", "short": true},
+                      {"title": "Status", "value": "HIGH RISK - Review Required", "short": false}
+                    ]
+                  }
+                ]
+              }' \
+              ${{ secrets.SECURITY_WEBHOOK_URL }}
+          fi
+
+      - name: ⚠️ Medium Risk Security Notice
+        if: steps.security-evaluation.outputs.security_status == 'medium'
+        run: |
+          echo "⚠️ MEDIUM RISK - Monitor security posture closely"
+          echo "Security Score: ${{ steps.security-evaluation.outputs.security_score }}/100"
+
+      - name: ✅ Good Security Status
+        if: steps.security-evaluation.outputs.security_status == 'low'
+        run: |
+          echo "✅ GOOD SECURITY POSTURE - Continue monitoring"
+          echo "Security Score: ${{ steps.security-evaluation.outputs.security_score }}/100"
+
+      - name: 🛡️ Excellent Security Status
+        if: steps.security-evaluation.outputs.security_status == 'excellent'
+        run: |
+          echo "🛡️ EXCELLENT SECURITY POSTURE - Outstanding!"
+          echo "Security Score: ${{ steps.security-evaluation.outputs.security_score }}/100"
+
+      - name: 📊 Generate Security Dashboard
+        run: |
+          mkdir -p security-dashboard
+          
+          cat > security-dashboard/security-summary.json << EOF
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "repository": "${{ github.repository }}",
+            "commit": "${{ github.sha }}",
+            "workflow_run": "${{ github.run_id }}",
+            "security_score": ${{ steps.security-evaluation.outputs.security_score }},
+            "security_status": "${{ steps.security-evaluation.outputs.security_status }}",
+            "critical_issues": ${{ steps.security-evaluation.outputs.critical_issues }},
+            "total_vulnerabilities": ${{ steps.security-evaluation.outputs.total_vulnerabilities }},
+            "scan_results": {
+              "dependency_scan": "${{ needs.dependency-scan.result }}",
+              "sast_scan": "${{ needs.sast-scan.result }}",
+              "secrets_scan": "${{ needs.secrets-scan.result }}",
+              "container_security": "${{ needs.container-security.result }}",
+              "web_security": "${{ needs.web-security.result }}",
+              "threat_detection": "${{ needs.threat-detection.result }}",
+              "compliance_scan": "${{ needs.compliance-scan.result }}"
+            }
+          }
+          EOF
+          
+          # Generate HTML dashboard
+          cat > security-dashboard/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Security Dashboard - BailBondPro</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+                  .container { max-width: 1200px; margin: 0 auto; }
+                  .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                  .score-card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                  .score { font-size: 3em; font-weight: bold; margin: 10px 0; }
+                  .critical { color: #dc3545; }
+                  .high { color: #fd7e14; }
+                  .medium { color: #ffc107; }
+                  .low { color: #28a745; }
+                  .excellent { color: #007bff; }
+                  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+                  .scan-result { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                  .status-success { border-left: 4px solid #28a745; }
+                  .status-failure { border-left: 4px solid #dc3545; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="header">
+                      <h1>🛡️ Security Dashboard</h1>
+                      <p>Repository: ${{ github.repository }} | Generated: $(date)</p>
+                  </div>
+                  
+                  <div class="score-card">
+                      <h2>Overall Security Score</h2>
+                      <div class="score ${{ steps.security-evaluation.outputs.security_status }}">${{ steps.security-evaluation.outputs.security_score }}/100</div>
+                      <p>Status: ${{ steps.security-evaluation.outputs.security_status }}</p>
+                      <p>Critical Issues: ${{ steps.security-evaluation.outputs.critical_issues }}</p>
+                      <p>Total Vulnerabilities: ${{ steps.security-evaluation.outputs.total_vulnerabilities }}</p>
+                  </div>
+                  
+                  <div class="grid">
+                      <div class="scan-result status-${{ needs.dependency-scan.result }}">
+                          <h3>📦 Dependency Scan</h3>
+                          <p>Status: ${{ needs.dependency-scan.result }}</p>
+                      </div>
+                      <div class="scan-result status-${{ needs.sast-scan.result }}">
+                          <h3>🔍 SAST Scan</h3>
+                          <p>Status: ${{ needs.sast-scan.result }}</p>
+                      </div>
+                      <div class="scan-result status-${{ needs.secrets-scan.result }}">
+                          <h3>🔐 Secrets Scan</h3>
+                          <p>Status: ${{ needs.secrets-scan.result }}</p>
+                      </div>
+                      <div class="scan-result status-${{ needs.container-security.result }}">
+                          <h3>🐳 Container Security</h3>
+                          <p>Status: ${{ needs.container-security.result }}</p>
+                      </div>
+                      <div class="scan-result status-${{ needs.web-security.result }}">
+                          <h3>🌐 Web Security</h3>
+                          <p>Status: ${{ needs.web-security.result }}</p>
+                      </div>
+                      <div class="scan-result status-${{ needs.threat-detection.result }}">
+                          <h3>🎯 Threat Detection</h3>
+                          <p>Status: ${{ needs.threat-detection.result }}</p>
+                      </div>
+                      <div class="scan-result status-${{ needs.compliance-scan.result }}">
+                          <h3>⚖️ Compliance</h3>
+                          <p>Status: ${{ needs.compliance-scan.result }}</p>
+                      </div>
+                  </div>
+              </div>
+          </body>
+          </html>
+          EOF
+
+      - name: 📤 Upload Security Dashboard
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-dashboard
+          path: |
+            security-dashboard/
+          retention-days: 90
+  
+  # ============================================================================
+  # COMPREHENSIVE SECURITY REPORTING
+  # ============================================================================
+  
+  security-report:
+    name: 📊 Comprehensive Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, sast-scan, secrets-scan, container-security, web-security, threat-detection, compliance-scan, security-monitoring]
+    if: always()
+    timeout-minutes: 15
+    outputs:
+      report_generated: ${{ steps.report-generation.outputs.report_generated }}
+      report_url: ${{ steps.report-generation.outputs.report_url }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📊 Generate Comprehensive Security Report
+        id: report-generation
+        run: |
+          echo "🔍 Generating comprehensive security assessment report..."
+          
+          # Create report directory
+          mkdir -p security-reports/{html,json,pdf}
+          
+          # Generate main security report
+          cat > security-reports/security-report.md << 'EOF'
+          # 🔒 BailBondPro Security Assessment Report
+          
+          **Generated:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Repository:** ${{ github.repository }}
+          **Commit:** ${{ github.sha }}
+          **Branch:** ${{ github.ref_name }}
+          **Workflow Run:** ${{ github.run_id }}
+          **Triggered by:** ${{ github.actor }}
+          
+          ---
+          
+          ## 📊 Executive Summary
+          
+          ### Overall Security Posture
+          - **Security Score:** ${{ needs.security-monitoring.outputs.security_score || 'Calculating...' }}/100
+          - **Security Status:** ${{ needs.security-monitoring.outputs.security_status || 'Unknown' }}
+          - **Critical Issues:** ${{ needs.security-monitoring.outputs.critical_issues || '0' }}
+          - **Total Vulnerabilities:** ${{ needs.security-monitoring.outputs.total_vulnerabilities || '0' }}
+          
+          ### Risk Assessment
+          EOF
+          
+          # Add risk assessment based on security status
+          SECURITY_STATUS="${{ needs.security-monitoring.outputs.security_status }}"
+          case "$SECURITY_STATUS" in
+            "critical")
+              echo "🚨 **CRITICAL RISK** - Immediate remediation required" >> security-reports/security-report.md
+              echo "- Multiple high-severity vulnerabilities detected" >> security-reports/security-report.md
+              echo "- Production deployment should be blocked" >> security-reports/security-report.md
+              echo "- Security team escalation recommended" >> security-reports/security-report.md
+              ;;
+            "high")
+              echo "⚠️ **HIGH RISK** - Urgent attention needed" >> security-reports/security-report.md
+              echo "- Significant security issues identified" >> security-reports/security-report.md
+              echo "- Review and remediation within 24-48 hours" >> security-reports/security-report.md
+              ;;
+            "medium")
+              echo "⚠️ **MEDIUM RISK** - Monitor and address" >> security-reports/security-report.md
+              echo "- Some security concerns identified" >> security-reports/security-report.md
+              echo "- Plan remediation within next sprint" >> security-reports/security-report.md
+              ;;
+            "low")
+              echo "✅ **LOW RISK** - Good security posture" >> security-reports/security-report.md
+              echo "- Minor issues or best practice improvements" >> security-reports/security-report.md
+              echo "- Continue monitoring and maintenance" >> security-reports/security-report.md
+              ;;
+            "excellent")
+              echo "🛡️ **EXCELLENT** - Outstanding security" >> security-reports/security-report.md
+              echo "- No significant security issues detected" >> security-reports/security-report.md
+              echo "- Exemplary security implementation" >> security-reports/security-report.md
+              ;;
+          esac
+          
+          cat >> security-reports/security-report.md << 'EOF'
+          
+          ---
+          
+          ## 🔍 Detailed Security Scan Results
+          
+          | Security Domain | Tool/Scanner | Status | Findings | Severity |
+          |---|---|---|---|---|
+          | 📦 Dependencies | npm audit, Snyk, OWASP | ${{ needs.dependency-scan.result }} | ${{ needs.dependency-scan.outputs.vulnerability_count || 'N/A' }} | ${{ needs.dependency-scan.outputs.max_severity || 'N/A' }} |
+          | 🔍 Static Analysis | CodeQL, Semgrep, ESLint | ${{ needs.sast-scan.result }} | ${{ needs.sast-scan.outputs.vulnerability_count || 'N/A' }} | ${{ needs.sast-scan.outputs.max_severity || 'N/A' }} |
+          | 🔐 Secrets | TruffleHog, GitLeaks, detect-secrets | ${{ needs.secrets-scan.result }} | ${{ needs.secrets-scan.outputs.secrets_found || 'N/A' }} | ${{ needs.secrets-scan.outputs.max_severity || 'N/A' }} |
+          | 🐳 Containers | Trivy, Snyk, Checkov | ${{ needs.container-security.result }} | ${{ needs.container-security.outputs.vulnerability_count || 'N/A' }} | ${{ needs.container-security.outputs.max_severity || 'N/A' }} |
+          | 🌐 Web Security | OWASP ZAP, Nuclei, Nikto | ${{ needs.web-security.result }} | ${{ needs.web-security.outputs.vulnerability_count || 'N/A' }} | ${{ needs.web-security.outputs.max_severity || 'N/A' }} |
+          | 🎯 Threat Detection | Advanced Patterns, Malware | ${{ needs.threat-detection.result }} | ${{ needs.threat-detection.outputs.threats_found || 'N/A' }} | ${{ needs.threat-detection.outputs.max_severity || 'N/A' }} |
+          | ⚖️ Compliance | GDPR, PCI DSS, Industry | ${{ needs.compliance-scan.result }} | ${{ needs.compliance-scan.outputs.violations_found || 'N/A' }} | ${{ needs.compliance-scan.outputs.critical_violations || 'N/A' }} |
+          
+          ---
+          
+          ## 🎯 Priority Remediation Plan
+          
+          ### Immediate Actions (0-24 hours)
+          EOF
+          
+          # Add immediate actions based on scan results
+          if [[ "${{ needs.secrets-scan.result }}" == "failure" ]]; then
+            echo "- 🚨 **CRITICAL:** Remove exposed secrets and rotate credentials" >> security-reports/security-report.md
+            echo "- 🔄 Invalidate any compromised API keys or tokens" >> security-reports/security-report.md
+            echo "- 📝 Review git history for additional secret exposure" >> security-reports/security-report.md
+          fi
+          
+          if [[ "${{ needs.dependency-scan.result }}" == "failure" ]]; then
+            echo "- 📦 **HIGH:** Update vulnerable dependencies to secure versions" >> security-reports/security-report.md
+            echo "- 🔍 Review transitive dependencies for additional risks" >> security-reports/security-report.md
+          fi
+          
+          cat >> security-reports/security-report.md << 'EOF'
+          
+          ### Short-term Actions (1-7 days)
+          EOF
+          
+          if [[ "${{ needs.sast-scan.result }}" == "failure" ]]; then
+            echo "- 🔍 Address static analysis security findings" >> security-reports/security-report.md
+            echo "- 🛠️ Implement secure coding practices" >> security-reports/security-report.md
+          fi
+          
+          if [[ "${{ needs.web-security.result }}" == "failure" ]]; then
+            echo "- 🌐 Fix web application security vulnerabilities" >> security-reports/security-report.md
+            echo "- 🔒 Implement additional security headers" >> security-reports/security-report.md
+          fi
+          
+          cat >> security-reports/security-report.md << 'EOF'
+          
+          ### Long-term Improvements (1-4 weeks)
+          - 🔄 Implement automated security testing in CI/CD
+          - 📚 Security training for development team
+          - 🛡️ Enhanced monitoring and alerting
+          - 📋 Regular security assessments and penetration testing
+          
+          ---
+          
+          ## 🏛️ Bail Bond Industry Security Compliance
+          
+          ### Regulatory Requirements
+          - **FCRA Compliance:** Fair Credit Reporting Act requirements for background checks
+          - **FDCPA Compliance:** Fair Debt Collection Practices Act for collections
+          - **UCC Standards:** Uniform Commercial Code filing security
+          - **Metro2 Guidelines:** Credit reporting format compliance
+          - **CFPB Regulations:** Consumer Financial Protection Bureau requirements
+          - **ECOA Compliance:** Equal Credit Opportunity Act adherence
+          
+          ### Industry-Specific Security Controls
+          - 🔐 **Defendant Data Protection:** Encrypt all personal information
+          - 📄 **Collateral Documentation:** Secure storage and access controls
+          - 🏦 **Financial Data Security:** PCI DSS compliance for payment processing
+          - 📊 **Audit Trails:** Comprehensive logging for regulatory compliance
+          - 🔍 **Background Check Security:** Secure API integrations and data handling
+          - ⚖️ **Court Integration Security:** Secure communication with court systems
+          
+          ### Data Classification and Handling
+          | Data Type | Classification | Security Requirements |
+          |---|---|---|
+          | Defendant PII | Highly Sensitive | Encryption at rest/transit, access logging |
+          | Financial Records | Sensitive | PCI DSS compliance, secure storage |
+          | Court Documents | Confidential | Access controls, audit trails |
+          | Collateral Info | Sensitive | Encryption, limited access |
+          | Communication Logs | Internal | Secure storage, retention policies |
+          
+          ---
+          
+          ## 📈 Security Metrics and KPIs
+          
+          ### Current Metrics
+          - **Mean Time to Detection (MTTD):** Automated (< 1 hour)
+          - **Mean Time to Response (MTTR):** Target < 4 hours for critical
+          - **Vulnerability Density:** ${{ needs.security-monitoring.outputs.total_vulnerabilities || '0' }} per 1000 LOC
+          - **Security Test Coverage:** Comprehensive multi-tool scanning
+          - **Compliance Score:** Based on industry requirements
+          
+          ### Trending Analysis
+          - Security posture improvement over time
+          - Vulnerability introduction and remediation rates
+          - Compliance adherence trends
+          - Security incident frequency
+          
+          ---
+          
+          ## 🔧 Technical Implementation Details
+          
+          ### Security Tools and Configurations
+          - **Dependency Scanning:** npm audit, Snyk, OWASP Dependency Check
+          - **SAST Tools:** GitHub CodeQL, Semgrep, ESLint Security
+          - **Secret Detection:** TruffleHog, GitLeaks, detect-secrets
+          - **Container Security:** Trivy, Snyk Container, Checkov
+          - **Web Security:** OWASP ZAP, Nuclei, Nikto
+          - **Compliance:** Custom industry-specific checks
+          
+          ### Security Pipeline Integration
+          - Automated scanning on every commit
+          - Pull request security gates
+          - Continuous monitoring and alerting
+          - Integration with issue tracking
+          - Security dashboard and reporting
+          
+          ---
+          
+          ## 📞 Incident Response and Contacts
+          
+          ### Security Team Contacts
+          - **Security Lead:** [Contact Information]
+          - **DevOps Team:** [Contact Information]
+          - **Compliance Officer:** [Contact Information]
+          
+          ### Escalation Procedures
+          1. **Critical Issues:** Immediate notification to security team
+          2. **High Severity:** Notification within 2 hours
+          3. **Medium/Low:** Include in daily security reports
+          
+          ### External Resources
+          - **Security Vendor Support:** [Contact Information]
+          - **Legal/Compliance Counsel:** [Contact Information]
+          - **Industry Security Groups:** [Contact Information]
+          
+          ---
+          
+          ## 📚 Additional Resources
+          
+          ### Documentation Links
+          - [Security Policies and Procedures](link-to-docs)
+          - [Incident Response Playbook](link-to-playbook)
+          - [Compliance Requirements](link-to-compliance)
+          - [Security Training Materials](link-to-training)
+          
+          ### Regulatory Resources
+          - [FCRA Guidelines](https://www.ftc.gov/legal-library/browse/rules/fair-credit-reporting-act)
+          - [FDCPA Requirements](https://www.ftc.gov/legal-library/browse/rules/fair-debt-collection-practices-act-text)
+          - [PCI DSS Standards](https://www.pcisecuritystandards.org/)
+          - [CFPB Regulations](https://www.consumerfinance.gov/)
+          
+          ---
+          
+          **Report Generated:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Workflow:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Security Pipeline Version:** 2.0.0
+          
+          *This report is automatically generated by the BailBondPro Security Assessment Pipeline*
+          EOF
+          
+          # Generate JSON summary for API consumption
+          cat > security-reports/json/security-summary.json << EOF
+          {
+            "metadata": {
+              "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+              "repository": "${{ github.repository }}",
+              "commit": "${{ github.sha }}",
+              "branch": "${{ github.ref_name }}",
+              "workflow_run": "${{ github.run_id }}",
+              "triggered_by": "${{ github.actor }}",
+              "pipeline_version": "2.0.0"
+            },
+            "security_posture": {
+              "overall_score": ${{ needs.security-monitoring.outputs.security_score || 0 }},
+              "security_status": "${{ needs.security-monitoring.outputs.security_status || 'unknown' }}",
+              "critical_issues": ${{ needs.security-monitoring.outputs.critical_issues || 0 }},
+              "total_vulnerabilities": ${{ needs.security-monitoring.outputs.total_vulnerabilities || 0 }}
+            },
+            "scan_results": {
+              "dependency_scan": {
+                "status": "${{ needs.dependency-scan.result }}",
+                "vulnerability_count": ${{ needs.dependency-scan.outputs.vulnerability_count || 0 }},
+                "max_severity": "${{ needs.dependency-scan.outputs.max_severity || 'none' }}"
+              },
+              "sast_scan": {
+                "status": "${{ needs.sast-scan.result }}",
+                "vulnerability_count": ${{ needs.sast-scan.outputs.vulnerability_count || 0 }},
+                "max_severity": "${{ needs.sast-scan.outputs.max_severity || 'none' }}"
+              },
+              "secrets_scan": {
+                "status": "${{ needs.secrets-scan.result }}",
+                "secrets_found": ${{ needs.secrets-scan.outputs.secrets_found || 0 }},
+                "max_severity": "${{ needs.secrets-scan.outputs.max_severity || 'none' }}"
+              },
+              "container_security": {
+                "status": "${{ needs.container-security.result }}",
+                "vulnerability_count": ${{ needs.container-security.outputs.vulnerability_count || 0 }},
+                "max_severity": "${{ needs.container-security.outputs.max_severity || 'none' }}"
+              },
+              "web_security": {
+                "status": "${{ needs.web-security.result }}",
+                "vulnerability_count": ${{ needs.web-security.outputs.vulnerability_count || 0 }},
+                "max_severity": "${{ needs.web-security.outputs.max_severity || 'none' }}"
+              },
+              "threat_detection": {
+                "status": "${{ needs.threat-detection.result }}",
+                "threats_found": ${{ needs.threat-detection.outputs.threats_found || 0 }},
+                "max_severity": "${{ needs.threat-detection.outputs.max_severity || 'none' }}"
+              },
+              "compliance_scan": {
+                "status": "${{ needs.compliance-scan.result }}",
+                "violations_found": ${{ needs.compliance-scan.outputs.violations_found || 0 }},
+                "critical_violations": ${{ needs.compliance-scan.outputs.critical_violations || 0 }}
+              }
+            },
+            "recommendations": {
+              "immediate_actions": [],
+              "short_term_actions": [],
+              "long_term_improvements": []
+            },
+            "compliance": {
+              "industry_standards": ["FCRA", "FDCPA", "UCC", "Metro2", "CFPB", "ECOA"],
+              "data_protection": ["PCI DSS", "GDPR", "CCPA"],
+              "security_frameworks": ["NIST", "ISO 27001", "SOC 2"]
+            }
+          }
+          EOF
+          
+          # Generate HTML report
+          cat > security-reports/html/security-report.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Security Assessment Report - BailBondPro</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f8f9fa; line-height: 1.6; }
+                  .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; }
+                  .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+                  .header h1 { margin: 0; font-size: 2.5em; font-weight: 300; }
+                  .header p { margin: 10px 0 0 0; opacity: 0.9; }
+                  .content { padding: 30px; }
+                  .score-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+                  .score-card { background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; border-left: 4px solid #007bff; }
+                  .score-card.critical { border-left-color: #dc3545; }
+                  .score-card.high { border-left-color: #fd7e14; }
+                  .score-card.medium { border-left-color: #ffc107; }
+                  .score-card.low { border-left-color: #28a745; }
+                  .score-card.excellent { border-left-color: #007bff; }
+                  .score-number { font-size: 2.5em; font-weight: bold; margin: 10px 0; }
+                  .score-number.critical { color: #dc3545; }
+                  .score-number.high { color: #fd7e14; }
+                  .score-number.medium { color: #ffc107; }
+                  .score-number.low { color: #28a745; }
+                  .score-number.excellent { color: #007bff; }
+                  .section { margin-bottom: 30px; }
+                  .section h2 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+                  .scan-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+                  .scan-result { background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #6c757d; }
+                  .scan-result.success { border-left-color: #28a745; }
+                  .scan-result.failure { border-left-color: #dc3545; }
+                  .scan-result h3 { margin: 0 0 10px 0; color: #333; }
+                  .scan-result p { margin: 5px 0; color: #666; }
+                  .recommendations { background: #e3f2fd; padding: 20px; border-radius: 8px; border-left: 4px solid #2196f3; }
+                  .compliance-section { background: #f3e5f5; padding: 20px; border-radius: 8px; border-left: 4px solid #9c27b0; }
+                  .footer { background: #343a40; color: white; padding: 20px; text-align: center; margin-top: 30px; }
+                  table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+                  th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                  th { background-color: #f8f9fa; font-weight: 600; }
+                  .status-success { color: #28a745; font-weight: bold; }
+                  .status-failure { color: #dc3545; font-weight: bold; }
+                  .status-skipped { color: #6c757d; font-weight: bold; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="header">
+                      <h1>🛡️ Security Assessment Report</h1>
+                      <p>BailBondPro Security Pipeline | Generated: $(date)</p>
+                  </div>
+                  
+                  <div class="content">
+                      <div class="section">
+                          <h2>📊 Security Overview</h2>
+                          <div class="score-section">
+                              <div class="score-card ${{ needs.security-monitoring.outputs.security_status }}">
+                                  <h3>Overall Score</h3>
+                                  <div class="score-number ${{ needs.security-monitoring.outputs.security_status }}">${{ needs.security-monitoring.outputs.security_score || '0' }}/100</div>
+                                  <p>Security Status: ${{ needs.security-monitoring.outputs.security_status || 'Unknown' }}</p>
+                              </div>
+                              <div class="score-card">
+                                  <h3>Critical Issues</h3>
+                                  <div class="score-number">${{ needs.security-monitoring.outputs.critical_issues || '0' }}</div>
+                                  <p>Require immediate attention</p>
+                              </div>
+                              <div class="score-card">
+                                  <h3>Total Vulnerabilities</h3>
+                                  <div class="score-number">${{ needs.security-monitoring.outputs.total_vulnerabilities || '0' }}</div>
+                                  <p>Across all security domains</p>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <div class="section">
+                          <h2>🔍 Scan Results</h2>
+                          <div class="scan-results">
+                              <div class="scan-result ${{ needs.dependency-scan.result }}">
+                                  <h3>📦 Dependency Security</h3>
+                                  <p>Status: <span class="status-${{ needs.dependency-scan.result }}">${{ needs.dependency-scan.result }}</span></p>
+                                  <p>Tools: npm audit, Snyk, OWASP</p>
+                              </div>
+                              <div class="scan-result ${{ needs.sast-scan.result }}">
+                                  <h3>🔍 Static Analysis</h3>
+                                  <p>Status: <span class="status-${{ needs.sast-scan.result }}">${{ needs.sast-scan.result }}</span></p>
+                                  <p>Tools: CodeQL, Semgrep, ESLint</p>
+                              </div>
+                              <div class="scan-result ${{ needs.secrets-scan.result }}">
+                                  <h3>🔐 Secret Detection</h3>
+                                  <p>Status: <span class="status-${{ needs.secrets-scan.result }}">${{ needs.secrets-scan.result }}</span></p>
+                                  <p>Tools: TruffleHog, GitLeaks</p>
+                              </div>
+                              <div class="scan-result ${{ needs.container-security.result }}">
+                                  <h3>🐳 Container Security</h3>
+                                  <p>Status: <span class="status-${{ needs.container-security.result }}">${{ needs.container-security.result }}</span></p>
+                                  <p>Tools: Trivy, Snyk, Checkov</p>
+                              </div>
+                              <div class="scan-result ${{ needs.web-security.result }}">
+                                  <h3>🌐 Web Security</h3>
+                                  <p>Status: <span class="status-${{ needs.web-security.result }}">${{ needs.web-security.result }}</span></p>
+                                  <p>Tools: OWASP ZAP, Nuclei</p>
+                              </div>
+                              <div class="scan-result ${{ needs.threat-detection.result }}">
+                                  <h3>🎯 Threat Detection</h3>
+                                  <p>Status: <span class="status-${{ needs.threat-detection.result }}">${{ needs.threat-detection.result }}</span></p>
+                                  <p>Advanced pattern analysis</p>
+                              </div>
+                              <div class="scan-result ${{ needs.compliance-scan.result }}">
+                                  <h3>⚖️ Compliance</h3>
+                                  <p>Status: <span class="status-${{ needs.compliance-scan.result }}">${{ needs.compliance-scan.result }}</span></p>
+                                  <p>Industry standards validation</p>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <div class="section compliance-section">
+                          <h2>🏛️ Bail Bond Industry Compliance</h2>
+                          <p>This security assessment includes specific checks for bail bond industry regulatory requirements:</p>
+                          <ul>
+                              <li><strong>FCRA:</strong> Fair Credit Reporting Act compliance for background checks</li>
+                              <li><strong>FDCPA:</strong> Fair Debt Collection Practices Act adherence</li>
+                              <li><strong>UCC:</strong> Uniform Commercial Code filing security standards</li>
+                              <li><strong>Metro2:</strong> Credit reporting format compliance</li>
+                              <li><strong>CFPB:</strong> Consumer Financial Protection Bureau regulations</li>
+                              <li><strong>ECOA:</strong> Equal Credit Opportunity Act requirements</li>
+                          </ul>
+                      </div>
+                      
+                      <div class="section recommendations">
+                          <h2>🎯 Recommendations</h2>
+                          <p>Based on the security assessment results, prioritize addressing any critical or high-severity findings. 
+                          Implement continuous security monitoring and regular compliance audits to maintain security posture.</p>
+                      </div>
+                  </div>
+                  
+                  <div class="footer">
+                      <p>Generated by BailBondPro Security Pipeline | Workflow: ${{ github.run_id }}</p>
+                      <p>Repository: ${{ github.repository }} | Commit: ${{ github.sha }}</p>
+                  </div>
+              </div>
+          </body>
+          </html>
+          EOF
+          
+          echo "report_generated=true" >> $GITHUB_OUTPUT
+          echo "report_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
+          
+          echo "✅ Comprehensive security report generated successfully!"
+
+      - name: 📤 Upload Security Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: comprehensive-security-reports
+          path: |
+            security-reports/
+          retention-days: 90
+
+      - name: 📧 Email Security Report
+        if: always() && (needs.security-monitoring.outputs.security_status == 'critical' || needs.security-monitoring.outputs.security_status == 'high')
+        run: |
+          echo "📧 Sending security report notification..."
+          # This would integrate with your email service
+          echo "Security report generated with status: ${{ needs.security-monitoring.outputs.security_status }}"
+          echo "Report available at: ${{ steps.report-generation.outputs.report_url }}"
+
+      - name: 📊 Update Security Metrics
+        if: always()
+        run: |
+          echo "📊 Updating security metrics and KPIs..."
+          
+          # Create metrics file for tracking
+          cat > security-metrics.json << EOF
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "security_score": ${{ needs.security-monitoring.outputs.security_score || 0 }},
+            "critical_issues": ${{ needs.security-monitoring.outputs.critical_issues || 0 }},
+            "total_vulnerabilities": ${{ needs.security-monitoring.outputs.total_vulnerabilities || 0 }},
+            "scan_duration": "$(date -d @$(($(date +%s) - ${{ github.event.head_commit.timestamp && 'date -d "${{ github.event.head_commit.timestamp }}" +%s' || '$(date +%s)' }})) -u +%H:%M:%S)",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}"
+          }
+          EOF
+          
+          echo "✅ Security metrics updated"
+
+      - name: 📤 Upload Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-assessment-report
+          path: |
+            security-report.md
+            security-reports/
+          retention-days: 30
+
+      - name: 💬 Comment Security Report on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('security-report.md', 'utf8');
+            
+            // Truncate report if too long for GitHub comment
+            const maxLength = 65000;
+            const truncatedReport = report.length > maxLength 
+              ? report.substring(0, maxLength) + '\n\n... (Report truncated. Download full report from artifacts)'
+              : report;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: truncatedReport
+            });
+
+      - name: 📧 Security Notification
+        if: always()
+        run: |
+          if [ -n "${{ secrets.SECURITY_WEBHOOK_URL }}" ]; then
+            # Determine overall status
+            OVERALL_STATUS="success"
+            if [[ "${{ needs.dependency-scan.result }}" == "failure" ]] || \
+               [[ "${{ needs.sast-scan.result }}" == "failure" ]] || \
+               [[ "${{ needs.secret-scan.result }}" == "failure" ]] || \
+               [[ "${{ needs.threat-detection.result }}" == "failure" ]]; then
+              OVERALL_STATUS="failure"
+            fi
+            
+            # Send notification
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{
+                \"text\": \"🔒 Security Scan Complete\",
+                \"attachments\": [
+                  {
+                    \"color\": \"$([ \"$OVERALL_STATUS\" = \"success\" ] && echo \"good\" || echo \"danger\")\",
+                    \"fields\": [
+                      {\"title\": \"Repository\", \"value\": \"${{ github.repository }}\", \"short\": true},
+                      {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
+                      {\"title\": \"Status\", \"value\": \"$OVERALL_STATUS\", \"short\": true},
+                      {\"title\": \"Commit\", \"value\": \"${{ github.sha }}\", \"short\": true},
+                      {\"title\": \"Workflow\", \"value\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"short\": false}
+                    ]
+                  }
+                ]
+              }" \
+              ${{ secrets.SECURITY_WEBHOOK_URL }}
+          fi
+
+  # ============================================================================
+  # SECURITY NOTIFICATIONS & ALERTS
+  # ============================================================================
+  
+  security-notifications:
+    name: 🚨 Security Notifications
+    runs-on: ubuntu-latest
+    needs: [security-report, security-monitoring]
+    if: always()
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔔 Slack Security Alert
+        if: needs.security-monitoring.outputs.security_status == 'critical' || needs.security-monitoring.outputs.security_status == 'high'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "🚨 Security Alert: BailBondPro",
+              "attachments": [
+                {
+                  "color": "${{ needs.security-monitoring.outputs.security_status == 'critical' && 'danger' || 'warning' }}",
+                  "fields": [
+                    {
+                      "title": "Security Status",
+                      "value": "${{ needs.security-monitoring.outputs.security_status }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Security Score",
+                      "value": "${{ needs.security-monitoring.outputs.security_score }}/100",
+                      "short": true
+                    },
+                    {
+                      "title": "Critical Issues",
+                      "value": "${{ needs.security-monitoring.outputs.critical_issues }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Total Vulnerabilities",
+                      "value": "${{ needs.security-monitoring.outputs.total_vulnerabilities }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Repository",
+                      "value": "${{ github.repository }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Branch",
+                      "value": "${{ github.ref_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Commit",
+                      "value": "<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>",
+                      "short": true
+                    },
+                    {
+                      "title": "Workflow",
+                      "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>",
+                      "short": true
+                    }
+                  ],
+                  "actions": [
+                    {
+                      "type": "button",
+                      "text": "View Security Report",
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: 🎯 Create Security Issues
+        if: needs.security-monitoring.outputs.critical_issues > 0
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const criticalIssues = ${{ needs.security-monitoring.outputs.critical_issues }};
+            const securityScore = ${{ needs.security-monitoring.outputs.security_score }};
+            const securityStatus = '${{ needs.security-monitoring.outputs.security_status }}';
+            
+            const issueTitle = `🚨 Critical Security Alert: ${criticalIssues} Critical Issues Detected`;
+            const issueBody = `
+            ## 🔒 Security Assessment Alert
+            
+            **Status:** ${securityStatus.toUpperCase()}
+            **Security Score:** ${securityScore}/100
+            **Critical Issues:** ${criticalIssues}
+            **Workflow:** [View Details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            
+            ### 🚨 Immediate Actions Required
+            
+            1. **Review Security Report:** Check the detailed security assessment report
+            2. **Block Deployments:** Prevent production deployments until resolved
+            3. **Security Team:** Notify security team immediately
+            4. **Remediation:** Address all critical and high-severity findings
+            
+            ### 📊 Assessment Details
+            
+            - **Repository:** ${{ github.repository }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Commit:** ${{ github.sha }}
+            - **Triggered by:** ${{ github.actor }}
+            - **Timestamp:** $(date -u)
+            
+            ### 🔍 Security Domains Affected
+            
+            This alert was triggered by critical findings in one or more security domains:
+            - Dependency vulnerabilities
+            - Static analysis findings
+            - Secret exposure
+            - Container security issues
+            - Web application vulnerabilities
+            - Threat detection alerts
+            - Compliance violations
+            
+            ### 🎯 Next Steps
+            
+            1. Review the [Security Report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            2. Address critical findings immediately
+            3. Re-run security assessment after fixes
+            4. Update this issue with remediation status
+            
+            ---
+            
+            **Auto-generated by BailBondPro Security Pipeline**
+            **Workflow ID:** ${{ github.run_id }}
+            `;
+            
+            // Create the issue
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: issueTitle,
+              body: issueBody,
+              labels: ['security', 'critical', 'bug', 'priority-high']
+            });
+            
+            console.log('✅ Critical security issue created successfully');
+
+  # ============================================================================
+  # DEPLOYMENT SECURITY GATE
+  # ============================================================================
+  
+  deployment-gate:
+    name: 🚪 Deployment Security Gate
+    runs-on: ubuntu-latest
+    needs: [security-monitoring, security-report]
+    if: always()
+    timeout-minutes: 5
+    outputs:
+      deployment_approved: ${{ steps.gate-decision.outputs.deployment_approved }}
+      gate_status: ${{ steps.gate-decision.outputs.gate_status }}
+      security_clearance: ${{ steps.gate-decision.outputs.security_clearance }}
+    steps:
+      - name: 🔍 Evaluate Security Gate
+        id: gate-decision
+        run: |
+          echo "🔍 Evaluating deployment security gate..."
+          
+          SECURITY_STATUS="${{ needs.security-monitoring.outputs.security_status }}"
+          SECURITY_SCORE="${{ needs.security-monitoring.outputs.security_score }}"
+          CRITICAL_ISSUES="${{ needs.security-monitoring.outputs.critical_issues }}"
+          
+          echo "Security Status: $SECURITY_STATUS"
+          echo "Security Score: $SECURITY_SCORE"
+          echo "Critical Issues: $CRITICAL_ISSUES"
+          
+          # Deployment gate logic
+          DEPLOYMENT_APPROVED="false"
+          GATE_STATUS="blocked"
+          SECURITY_CLEARANCE="denied"
+          
+          case "$SECURITY_STATUS" in
+            "excellent")
+              DEPLOYMENT_APPROVED="true"
+              GATE_STATUS="approved"
+              SECURITY_CLEARANCE="full"
+              echo "✅ DEPLOYMENT APPROVED: Excellent security posture"
+              ;;
+            "low")
+              DEPLOYMENT_APPROVED="true"
+              GATE_STATUS="approved"
+              SECURITY_CLEARANCE="conditional"
+              echo "✅ DEPLOYMENT APPROVED: Low risk, monitoring recommended"
+              ;;
+            "medium")
+              if [[ "$CRITICAL_ISSUES" == "0" ]]; then
+                DEPLOYMENT_APPROVED="true"
+                GATE_STATUS="approved"
+                SECURITY_CLEARANCE="conditional"
+                echo "⚠️ DEPLOYMENT APPROVED: Medium risk, no critical issues"
+              else
+                DEPLOYMENT_APPROVED="false"
+                GATE_STATUS="blocked"
+                SECURITY_CLEARANCE="denied"
+                echo "🚫 DEPLOYMENT BLOCKED: Medium risk with critical issues"
+              fi
+              ;;
+            "high")
+              DEPLOYMENT_APPROVED="false"
+              GATE_STATUS="blocked"
+              SECURITY_CLEARANCE="denied"
+              echo "🚫 DEPLOYMENT BLOCKED: High security risk detected"
+              ;;
+            "critical")
+              DEPLOYMENT_APPROVED="false"
+              GATE_STATUS="blocked"
+              SECURITY_CLEARANCE="denied"
+              echo "🚨 DEPLOYMENT BLOCKED: Critical security vulnerabilities"
+              ;;
+            *)
+              DEPLOYMENT_APPROVED="false"
+              GATE_STATUS="blocked"
+              SECURITY_CLEARANCE="denied"
+              echo "❓ DEPLOYMENT BLOCKED: Unknown security status"
+              ;;
+          esac
+          
+          # Set outputs
+          echo "deployment_approved=$DEPLOYMENT_APPROVED" >> $GITHUB_OUTPUT
+          echo "gate_status=$GATE_STATUS" >> $GITHUB_OUTPUT
+          echo "security_clearance=$SECURITY_CLEARANCE" >> $GITHUB_OUTPUT
+
+      - name: 🚫 Fail on Security Gate Block
+        if: steps.gate-decision.outputs.deployment_approved == 'false'
+        run: |
+          echo "🚫 Deployment blocked by security gate"
+          echo "Security Status: ${{ needs.security-monitoring.outputs.security_status }}"
+          echo "Critical Issues: ${{ needs.security-monitoring.outputs.critical_issues }}"
+          echo ""
+          echo "Please address all critical security findings before deployment."
+          echo "View detailed security report: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          exit 1
+
+  # ============================================================================
+  # WORKFLOW COMPLETION SUMMARY
+  # ============================================================================
+  
+  security-workflow-summary:
+    name: 📋 Security Workflow Summary
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, sast-scan, secrets-scan, container-security, web-security, threat-detection, compliance-scan, security-monitoring, security-report, security-notifications, deployment-gate]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: 📊 Generate Workflow Summary
+        run: |
+          echo "📋 Generating comprehensive security workflow summary..."
+          echo "✅ Security workflow completed successfully!"
+          echo ""
+          echo "📊 Final Results:"
+          echo "- Security Status: ${{ needs.security-monitoring.outputs.security_status || 'Unknown' }}"
+          echo "- Security Score: ${{ needs.security-monitoring.outputs.security_score || 'N/A' }}/100"
+          echo "- Critical Issues: ${{ needs.security-monitoring.outputs.critical_issues || '0' }}"
+          echo "- Deployment Gate: ${{ needs.deployment-gate.outputs.gate_status || 'Unknown' }}"
+          echo ""
+          echo "🎯 Next Steps:"
+          if [[ "${{ needs.deployment-gate.outputs.deployment_approved }}" == "true" ]]; then
+            echo "✅ Deployment approved - proceed with monitoring"
+          else
+            echo "🚫 Deployment blocked - address security findings"
+          fi
+
+# ============================================================================
+# Workflow Configuration
+# ============================================================================
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

@@ -1,0 +1,385 @@
+# ============================================================================
+# BailBondPro - Production Docker Compose Configuration
+# Comprehensive production setup with monitoring, security, and scalability
+# ============================================================================
+
+version: '3.8'
+
+networks:
+  bailbondpro-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  monitoring:
+    driver: bridge
+  traefik:
+    external: true
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads_data:
+    driver: local
+  logs_data:
+    driver: local
+  backups_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+
+services:
+  # ============================================================================
+  # Reverse Proxy & Load Balancer
+  # ============================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: bailbondpro-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik:/etc/traefik:ro
+      - ./ssl:/ssl:ro
+    networks:
+      - traefik
+      - bailbondpro-network
+    environment:
+      - TRAEFIK_API_DASHBOARD=true
+      - TRAEFIK_API_INSECURE=false
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.bailbondpro.com`)"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+
+  # ============================================================================
+  # Main Application
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: bailbondpro-app
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bailbondpro-network
+    volumes:
+      - uploads_data:/app/uploads
+      - logs_data:/app/logs
+      - backups_data:/app/backups
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://bailbondpro:${POSTGRES_PASSWORD}@postgres:5432/bailbondpro
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET=${S3_BUCKET}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - GOOGLE_ANALYTICS_ID=${GOOGLE_ANALYTICS_ID}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.app.rule=Host(`bailbondpro.com`) || Host(`www.bailbondpro.com`)"
+      - "traefik.http.routers.app.tls=true"
+      - "traefik.http.routers.app.tls.certresolver=letsencrypt"
+      - "traefik.http.services.app.loadbalancer.server.port=3000"
+      - "traefik.http.middlewares.app-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.app-insecure.rule=Host(`bailbondpro.com`) || Host(`www.bailbondpro.com`)"
+      - "traefik.http.routers.app-insecure.middlewares=app-redirect"
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.js"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ============================================================================
+  # Database Services
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: bailbondpro-postgres
+    restart: unless-stopped
+    networks:
+      - bailbondpro-network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    environment:
+      - POSTGRES_DB=bailbondpro
+      - POSTGRES_USER=bailbondpro
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=4MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bailbondpro -d bailbondpro"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    container_name: bailbondpro-redis
+    restart: unless-stopped
+    networks:
+      - bailbondpro-network
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 300
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ============================================================================
+  # Monitoring Stack
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: bailbondpro-prometheus
+    restart: unless-stopped
+    networks:
+      - monitoring
+      - bailbondpro-network
+    volumes:
+      - prometheus_data:/prometheus
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.bailbondpro.com`)"
+      - "traefik.http.routers.prometheus.tls=true"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: bailbondpro-grafana
+    restart: unless-stopped
+    networks:
+      - monitoring
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.bailbondpro.com`)"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # ============================================================================
+  # Logging Stack
+  # ============================================================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: bailbondpro-elasticsearch
+    restart: unless-stopped
+    networks:
+      - monitoring
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: bailbondpro-kibana
+    restart: unless-stopped
+    networks:
+      - monitoring
+    depends_on:
+      - elasticsearch
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kibana.rule=Host(`kibana.bailbondpro.com`)"
+      - "traefik.http.routers.kibana.tls=true"
+      - "traefik.http.services.kibana.loadbalancer.server.port=5601"
+
+  # ============================================================================
+  # Backup Services
+  # ============================================================================
+  backup:
+    image: postgres:16-alpine
+    container_name: bailbondpro-backup
+    restart: "no"
+    networks:
+      - bailbondpro-network
+    volumes:
+      - backups_data:/backups
+      - ./scripts:/scripts:ro
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=bailbondpro
+      - POSTGRES_USER=bailbondpro
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BACKUP_BUCKET}
+    command: /scripts/backup.sh
+    depends_on:
+      - postgres
+
+  # ============================================================================
+  # Security Services
+  # ============================================================================
+  fail2ban:
+    image: crazymax/fail2ban:latest
+    container_name: bailbondpro-fail2ban
+    restart: unless-stopped
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./fail2ban:/data
+      - logs_data:/var/log:ro
+    environment:
+      - TZ=UTC
+      - F2B_LOG_LEVEL=INFO
+
+  # ============================================================================
+  # Performance & Caching
+  # ============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: bailbondpro-nginx
+    restart: unless-stopped
+    networks:
+      - bailbondpro-network
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - uploads_data:/var/www/uploads:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.static.rule=Host(`static.bailbondpro.com`)"
+      - "traefik.http.routers.static.tls=true"
+      - "traefik.http.services.static.loadbalancer.server.port=80"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+# ============================================================================
+# Health Checks & Monitoring
+# ============================================================================
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+# ============================================================================
+# Resource Limits
+# ============================================================================
+x-resource-defaults: &resource-defaults
+  deploy:
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 512M
+      reservations:
+        cpus: '0.25'
+        memory: 256M

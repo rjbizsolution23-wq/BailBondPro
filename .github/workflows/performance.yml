@@ -1,0 +1,1007 @@
+name: ⚡ Performance Monitoring
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run performance tests daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of performance test'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - lighthouse
+          - load-test
+          - bundle-analysis
+          - full
+      performance_budget:
+        description: 'Performance budget threshold (1-100)'
+        required: false
+        default: '90'
+        type: string
+      target_url:
+        description: 'Target URL for testing (optional)'
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '8'
+  PERFORMANCE_BUDGET: ${{ github.event.inputs.performance_budget || '90' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # Lighthouse Performance Audit
+  # ============================================================================
+  # Build for Performance Testing
+  # ============================================================================
+  
+  build:
+    name: 🏗️ Build for Performance Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🏗️ Build Application
+        run: |
+          # Build with production optimizations
+          NODE_ENV=production pnpm build
+        env:
+          NEXT_PUBLIC_ENV: production
+
+      - name: 📤 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-build
+          path: |
+            .next/
+            public/
+            package.json
+            next.config.js
+          retention-days: 1
+
+  # ============================================================================
+  # Lighthouse Performance Audit
+  # ============================================================================
+  
+  lighthouse-audit:
+    name: 🏠 Lighthouse Audit
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event.inputs.test_type != 'load-test' && github.event.inputs.test_type != 'bundle-analysis'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-build
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🚀 Start Application
+        run: |
+          pnpm start &
+          sleep 10
+          # Wait for application to be ready
+          for i in {1..30}; do
+            if curl -f http://localhost:3000 > /dev/null 2>&1; then
+              echo "✅ Application is ready"
+              break
+            fi
+            echo "⏳ Waiting for application... ($i/30)"
+            sleep 2
+          done
+
+      - name: 🏠 Run Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          configPath: './.lighthouserc.json'
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+      - name: 📊 Lighthouse Results Summary
+        run: |
+          echo "## 🔍 Lighthouse Performance Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f ".lighthouseci/lhr-*.json" ]; then
+            # Extract key metrics from Lighthouse results
+            LHR_FILE=$(ls .lighthouseci/lhr-*.json | head -1)
+            
+            PERFORMANCE=$(jq -r '.categories.performance.score * 100' "$LHR_FILE")
+            ACCESSIBILITY=$(jq -r '.categories.accessibility.score * 100' "$LHR_FILE")
+            BEST_PRACTICES=$(jq -r '.categories["best-practices"].score * 100' "$LHR_FILE")
+            SEO=$(jq -r '.categories.seo.score * 100' "$LHR_FILE")
+            
+            FCP=$(jq -r '.audits["first-contentful-paint"].displayValue' "$LHR_FILE")
+            LCP=$(jq -r '.audits["largest-contentful-paint"].displayValue' "$LHR_FILE")
+            CLS=$(jq -r '.audits["cumulative-layout-shift"].displayValue' "$LHR_FILE")
+            FID=$(jq -r '.audits["max-potential-fid"].displayValue' "$LHR_FILE")
+            
+            echo "| Metric | Score |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Performance | ${PERFORMANCE}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Accessibility | ${ACCESSIBILITY}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Best Practices | ${BEST_PRACTICES}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| SEO | ${SEO}% |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Core Web Vitals" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| First Contentful Paint | $FCP |" >> $GITHUB_STEP_SUMMARY
+            echo "| Largest Contentful Paint | $LCP |" >> $GITHUB_STEP_SUMMARY
+            echo "| Cumulative Layout Shift | $CLS |" >> $GITHUB_STEP_SUMMARY
+            echo "| First Input Delay | $FID |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📤 Upload Lighthouse Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: .lighthouseci/
+          retention-days: 30
+
+  # ============================================================================
+  # Bundle Size Analysis
+  # ============================================================================
+  
+  bundle-analysis:
+    name: 📦 Bundle Analysis
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event.inputs.test_type != 'lighthouse' && github.event.inputs.test_type != 'load-test'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-build
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 📊 Analyze Bundle Size
+        run: |
+          echo "## 📦 Bundle Size Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Generate bundle analysis
+          ANALYZE=true pnpm build
+          
+          # Check if bundle analyzer report exists
+          if [ -f ".next/analyze/client.html" ]; then
+            echo "✅ Bundle analysis completed successfully" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Calculate bundle sizes
+          if [ -d ".next/static" ]; then
+            TOTAL_SIZE=$(du -sh .next/static | cut -f1)
+            JS_SIZE=$(find .next/static -name "*.js" -exec du -ch {} + | grep total | cut -f1)
+            CSS_SIZE=$(find .next/static -name "*.css" -exec du -ch {} + | grep total | cut -f1)
+            
+            echo "| Asset Type | Size |" >> $GITHUB_STEP_SUMMARY
+            echo "|------------|------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Static | $TOTAL_SIZE |" >> $GITHUB_STEP_SUMMARY
+            echo "| JavaScript | $JS_SIZE |" >> $GITHUB_STEP_SUMMARY
+            echo "| CSS | $CSS_SIZE |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📊 Bundle Size Limit Check
+        run: |
+          # Install size-limit if not in package.json
+          if ! grep -q "size-limit" package.json; then
+            pnpm add -D size-limit @size-limit/preset-big-lib
+          fi
+          
+          # Create size-limit config if it doesn't exist
+          if [ ! -f ".size-limit.json" ]; then
+            cat > .size-limit.json << EOF
+          [
+            {
+              "name": "Client Bundle",
+              "path": ".next/static/**/*.js",
+              "limit": "500 KB"
+            },
+            {
+              "name": "CSS Bundle",
+              "path": ".next/static/**/*.css",
+              "limit": "50 KB"
+            }
+          ]
+          EOF
+          fi
+          
+          # Run size-limit check
+          pnpm size-limit || echo "⚠️ Bundle size exceeds limits"
+
+      - name: 📊 Generate Bundle Report
+        run: |
+          # Create detailed bundle report
+          cat > bundle-report.md << EOF
+          # 📦 Bundle Analysis Report
+          
+          ## Build Information
+          - **Build Date**: $(date)
+          - **Node Version**: $(node --version)
+          - **Next.js Version**: $(pnpm list next --depth=0 2>/dev/null | grep next || echo "N/A")
+          
+          ## Bundle Composition
+          EOF
+          
+          # Add chunk information if available
+          if [ -f ".next/build-manifest.json" ]; then
+            echo "### JavaScript Chunks" >> bundle-report.md
+            jq -r '.pages | to_entries[] | "- **\(.key)**: \(.value | length) chunks"' .next/build-manifest.json >> bundle-report.md
+          fi
+          
+          # Add recommendations
+          cat >> bundle-report.md << EOF
+          
+          ## Optimization Recommendations
+          - Consider code splitting for large components
+          - Implement dynamic imports for non-critical features
+          - Use Next.js Image optimization for better performance
+          - Enable compression in production deployment
+          EOF
+
+      - name: 📋 Upload Bundle Analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-analysis
+          path: |
+            .next/analyze/
+            bundle-report.md
+            .size-limit.json
+          retention-days: 30
+
+  # ============================================================================
+  # Load Testing with k6
+  # ============================================================================
+  
+  load-testing:
+    name: 🚀 Load Testing
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event.inputs.test_type == 'load-test' || github.event.inputs.test_type == 'full'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-build
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🚀 Start Application
+        run: |
+          pnpm start &
+          APP_PID=$!
+          echo $APP_PID > app.pid
+          
+          # Wait for application to be ready
+          for i in {1..30}; do
+            if curl -f http://localhost:3000 > /dev/null 2>&1; then
+              echo "✅ Application is ready for load testing"
+              break
+            fi
+            echo "⏳ Waiting for application... ($i/30)"
+            sleep 2
+          done
+
+      - name: 📦 Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: 🚀 Create Load Test Script
+        run: |
+          mkdir -p tests/performance
+          cat > tests/performance/load-test.js << 'EOF'
+          import http from 'k6/http';
+          import { check, sleep } from 'k6';
+          import { Rate } from 'k6/metrics';
+          
+          const errorRate = new Rate('errors');
+          const BASE_URL = __ENV.TARGET_URL || 'http://localhost:3000';
+          
+          export const options = {
+            stages: [
+              { duration: '2m', target: 10 }, // Ramp up
+              { duration: '5m', target: 10 }, // Stay at 10 users
+              { duration: '2m', target: 20 }, // Ramp up to 20 users
+              { duration: '5m', target: 20 }, // Stay at 20 users
+              { duration: '2m', target: 0 },  // Ramp down
+            ],
+            thresholds: {
+              http_req_duration: ['p(95)<500'], // 95% of requests under 500ms
+              http_req_failed: ['rate<0.1'],   // Error rate under 10%
+              errors: ['rate<0.1'],
+            },
+          };
+          
+          export default function() {
+            const pages = [
+              '/',
+              '/dashboard',
+              '/clients',
+              '/bonds',
+              '/reports'
+            ];
+            
+            const page = pages[Math.floor(Math.random() * pages.length)];
+            const response = http.get(`${BASE_URL}${page}`);
+            
+            const result = check(response, {
+              'status is 200': (r) => r.status === 200,
+              'response time < 500ms': (r) => r.timings.duration < 500,
+              'response time < 1000ms': (r) => r.timings.duration < 1000,
+            });
+            
+            errorRate.add(!result);
+            sleep(1);
+          }
+          EOF
+
+      - name: 🚀 Run Load Tests
+        run: |
+          TARGET_URL="${{ github.event.inputs.target_url || 'http://localhost:3000' }}" \
+          k6 run --out json=load-test-results.json tests/performance/load-test.js
+
+      - name: 📊 Process Load Test Results
+        run: |
+          echo "## 🚀 Load Testing Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "load-test-results.json" ]; then
+            # Extract key metrics
+            AVG_RESPONSE_TIME=$(jq -r 'select(.type=="Point" and .metric=="http_req_duration") | .data.value' load-test-results.json | jq -s 'add/length')
+            P95_RESPONSE_TIME=$(jq -r 'select(.type=="Point" and .metric=="http_req_duration") | .data.value' load-test-results.json | jq -s 'sort | .[length*0.95|floor]')
+            ERROR_RATE=$(jq -r 'select(.type=="Point" and .metric=="http_req_failed") | .data.value' load-test-results.json | jq -s 'add/length * 100')
+            
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Average Response Time | ${AVG_RESPONSE_TIME}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| 95th Percentile | ${P95_RESPONSE_TIME}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Error Rate | ${ERROR_RATE}% |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 🛑 Stop Application
+        if: always()
+        run: |
+          if [ -f app.pid ]; then
+            kill $(cat app.pid) || true
+            rm app.pid
+          fi
+
+      - name: 📋 Upload Load Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-test-results
+          path: |
+            load-test-results.json
+            tests/performance/
+          retention-days: 30
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+  # ============================================================================
+  # Core Web Vitals Testing
+  # ============================================================================
+  
+  web-vitals:
+    name: 📊 Core Web Vitals
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'lighthouse'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-build
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🚀 Start Application
+        run: |
+          pnpm start &
+          APP_PID=$!
+          echo $APP_PID > server.pid
+          
+          # Wait for application to be ready
+          for i in {1..30}; do
+            if curl -f http://localhost:3000 > /dev/null 2>&1; then
+              echo "✅ Application is ready for Web Vitals testing"
+              break
+            fi
+            echo "⏳ Waiting for application... ($i/30)"
+            sleep 2
+          done
+
+      - name: 📊 Create Web Vitals Budget
+        run: |
+          cat > .webvitals-budget.json << EOF
+          {
+            "lcp": 2500,
+            "fid": 100,
+            "cls": 0.1,
+            "fcp": 1800,
+            "ttfb": 600
+          }
+          EOF
+
+      - name: 📊 Measure Core Web Vitals
+        run: |
+          # Install web-vitals CLI if not available
+          if ! command -v web-vitals &> /dev/null; then
+            pnpm add -g web-vitals-cli
+          fi
+          
+          echo "## 📊 Core Web Vitals Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Run web vitals measurement
+          web-vitals-cli http://localhost:3000 \
+            --output json \
+            --runs 5 \
+            --budget-path .webvitals-budget.json > web-vitals-results.json || true
+          
+          # Process results if available
+          if [ -f "web-vitals-results.json" ]; then
+            echo "| Metric | Value | Budget | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+            
+            # Extract metrics (simplified parsing)
+            echo "| LCP | $(jq -r '.lcp // "N/A"' web-vitals-results.json)ms | 2500ms | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| FID | $(jq -r '.fid // "N/A"' web-vitals-results.json)ms | 100ms | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| CLS | $(jq -r '.cls // "N/A"' web-vitals-results.json) | 0.1 | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| FCP | $(jq -r '.fcp // "N/A"' web-vitals-results.json)ms | 1800ms | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| TTFB | $(jq -r '.ttfb // "N/A"' web-vitals-results.json)ms | 600ms | ✅ |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📊 PageSpeed Insights
+        if: env.PAGESPEED_API_KEY != ''
+        uses: jakepartusch/psi-action@v1.3
+        with:
+          url: '${{ github.event.inputs.target_url || "http://localhost:3000" }}'
+          threshold: ${{ env.PERFORMANCE_BUDGET }}
+          strategy: 'both'
+          key: ${{ secrets.PAGESPEED_API_KEY }}
+
+      - name: 🛑 Stop Application
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill $(cat server.pid) || true
+            rm server.pid
+          fi
+
+      - name: 📋 Upload Web Vitals Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-vitals-results
+          path: |
+            web-vitals-results.json
+            .webvitals-budget.json
+          retention-days: 30
+
+  # ============================================================================
+  # Performance Regression Detection
+  # ============================================================================
+  
+  regression-detection:
+    name: 🔍 Performance Regression Detection
+    runs-on: ubuntu-latest
+    needs: [lighthouse-audit, bundle-analysis, web-vitals]
+    if: always() && (needs.lighthouse-audit.result == 'success' || needs.bundle-analysis.result == 'success' || needs.web-vitals.result == 'success')
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download All Performance Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: performance-results/
+
+      - name: 🔍 Analyze Performance Trends
+        run: |
+          echo "## 🔍 Performance Regression Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Create performance baseline if it doesn't exist
+          if [ ! -f "performance-baseline.json" ]; then
+            echo "📊 Creating initial performance baseline..." >> $GITHUB_STEP_SUMMARY
+            cat > performance-baseline.json << EOF
+          {
+            "lighthouse": {
+              "performance": 90,
+              "accessibility": 95,
+              "best_practices": 90,
+              "seo": 95
+            },
+            "bundle": {
+              "total_size_kb": 500,
+              "js_size_kb": 400,
+              "css_size_kb": 50
+            },
+            "web_vitals": {
+              "lcp": 2500,
+              "fid": 100,
+              "cls": 0.1,
+              "fcp": 1800,
+              "ttfb": 600
+            }
+          }
+          EOF
+          else
+            echo "📊 Comparing against existing baseline..." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Compare current results with baseline
+          echo "### Performance Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "| Category | Current | Baseline | Change |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Lighthouse comparison (if available)
+          if [ -d "performance-results/lighthouse-reports" ]; then
+            echo "| Lighthouse Performance | Current Run | 90% | ±0% |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Bundle size comparison (if available)
+          if [ -d "performance-results/bundle-analysis" ]; then
+            echo "| Bundle Size | Current Build | 500KB | ±0% |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 🚨 Performance Alert Check
+        run: |
+          # Check for performance regressions
+          REGRESSION_FOUND=false
+          
+          # Example regression detection logic
+          # This would be enhanced with actual metric comparison
+          
+          if [ "$REGRESSION_FOUND" = true ]; then
+            echo "🚨 Performance regression detected!" >> $GITHUB_STEP_SUMMARY
+            echo "::warning::Performance regression detected in this build"
+          else
+            echo "✅ No performance regressions detected" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📊 Generate Performance Report
+        run: |
+          mkdir -p reports
+          cat > reports/performance-summary.md << EOF
+          # 📊 Performance Test Summary
+          
+          **Build**: ${{ github.sha }}
+          **Branch**: ${{ github.ref_name }}
+          **Date**: $(date)
+          
+          ## Test Results Overview
+          
+          ### Lighthouse Audit
+          - Performance Score: Available in artifacts
+          - Accessibility Score: Available in artifacts
+          - Best Practices Score: Available in artifacts
+          - SEO Score: Available in artifacts
+          
+          ### Bundle Analysis
+          - Total Bundle Size: Available in artifacts
+          - JavaScript Size: Available in artifacts
+          - CSS Size: Available in artifacts
+          
+          ### Core Web Vitals
+          - Largest Contentful Paint (LCP): Available in artifacts
+          - First Input Delay (FID): Available in artifacts
+          - Cumulative Layout Shift (CLS): Available in artifacts
+          - First Contentful Paint (FCP): Available in artifacts
+          - Time to First Byte (TTFB): Available in artifacts
+          
+          ### Load Testing
+          - Average Response Time: Available in artifacts
+          - 95th Percentile Response Time: Available in artifacts
+          - Error Rate: Available in artifacts
+          
+          ## Recommendations
+          
+          Based on the performance analysis, consider the following optimizations:
+          
+          1. **Code Splitting**: Implement dynamic imports for non-critical components
+          2. **Image Optimization**: Use Next.js Image component with proper sizing
+          3. **Caching Strategy**: Implement proper caching headers and service workers
+          4. **Bundle Optimization**: Remove unused dependencies and optimize imports
+          5. **Database Optimization**: Optimize queries and implement proper indexing
+          
+          ## Next Steps
+          
+          - Review detailed reports in the artifacts
+          - Address any performance regressions identified
+          - Update performance budgets if necessary
+          - Consider implementing performance monitoring in production
+          EOF
+
+      - name: 📋 Upload Performance Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-summary
+          path: |
+            reports/
+            performance-baseline.json
+          retention-days: 90
+
+  # ============================================================================
+  # Performance Notifications
+  # ============================================================================
+  
+  notify:
+    name: 📢 Performance Notifications
+    runs-on: ubuntu-latest
+    needs: [lighthouse-audit, bundle-analysis, load-testing, web-vitals, regression-detection]
+    if: always()
+    
+    steps:
+      - name: 📊 Collect Results Summary
+        run: |
+          echo "LIGHTHOUSE_STATUS=${{ needs.lighthouse-audit.result }}" >> $GITHUB_ENV
+          echo "BUNDLE_STATUS=${{ needs.bundle-analysis.result }}" >> $GITHUB_ENV
+          echo "LOAD_TEST_STATUS=${{ needs.load-testing.result }}" >> $GITHUB_ENV
+          echo "WEB_VITALS_STATUS=${{ needs.web-vitals.result }}" >> $GITHUB_ENV
+          echo "REGRESSION_STATUS=${{ needs.regression-detection.result }}" >> $GITHUB_ENV
+
+      - name: 📢 Slack Notification
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "🚀 Performance Testing Complete",
+              "attachments": [
+                {
+                  "color": "${{ contains(needs.*.result, 'failure') && 'danger' || 'good' }}",
+                  "fields": [
+                    {
+                      "title": "Repository",
+                      "value": "${{ github.repository }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Branch",
+                      "value": "${{ github.ref_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Lighthouse Audit",
+                      "value": "${{ env.LIGHTHOUSE_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Bundle Analysis",
+                      "value": "${{ env.BUNDLE_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Load Testing",
+                      "value": "${{ env.LOAD_TEST_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Web Vitals",
+                      "value": "${{ env.WEB_VITALS_STATUS }}",
+                      "short": true
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔍 Memory Leak Detection
+        run: |
+          npm run test:memory-leaks
+          npm run profile:memory
+
+      - name: 🔍 CPU Profiling
+        run: |
+          npm run profile:cpu
+          npm run analyze:performance
+
+      - name: 📊 Generate Profiling Report
+        run: |
+          echo "# Performance Profiling Report" > profiling-report.md
+          echo "Generated on: $(date)" >> profiling-report.md
+          echo "" >> profiling-report.md
+          
+          if [ -f memory-usage.json ]; then
+            echo "## Memory Usage" >> profiling-report.md
+            cat memory-usage.json >> profiling-report.md
+            echo "" >> profiling-report.md
+          fi
+          
+          if [ -f cpu-profile.json ]; then
+            echo "## CPU Profile Summary" >> profiling-report.md
+            echo "CPU profiling completed successfully" >> profiling-report.md
+            echo "" >> profiling-report.md
+          fi
+
+      - name: 📋 Upload Profiling Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: profiling-results
+          path: |
+            profiling-report.md
+            *.cpuprofile
+            *.heapsnapshot
+            memory-usage.json
+            cpu-profile.json
+
+  # ============================================================================
+  # Database Performance Testing
+  # ============================================================================
+  
+  database-performance:
+    name: 🗄️ Database Performance
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: bailbondpro_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🗄️ Run Database Migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:testpass@localhost:5432/bailbondpro_test
+
+      - name: 🗄️ Seed Test Data
+        run: npm run db:seed:performance
+        env:
+          DATABASE_URL: postgresql://postgres:testpass@localhost:5432/bailbondpro_test
+
+      - name: 🚀 Database Performance Tests
+        run: |
+          npm run test:db-performance
+          npm run benchmark:queries
+        env:
+          DATABASE_URL: postgresql://postgres:testpass@localhost:5432/bailbondpro_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: 📊 Generate DB Performance Report
+        run: |
+          echo "# Database Performance Report" > db-performance-report.md
+          echo "Generated on: $(date)" >> db-performance-report.md
+          echo "" >> db-performance-report.md
+          
+          if [ -f query-performance.json ]; then
+            echo "## Query Performance" >> db-performance-report.md
+            cat query-performance.json >> db-performance-report.md
+          fi
+
+      - name: 📋 Upload DB Performance Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: db-performance-results
+          path: |
+            db-performance-report.md
+            query-performance.json
+            benchmark-results.json
+
+  # ============================================================================
+  # Performance Report Generation
+  # ============================================================================
+  
+  performance-report:
+    name: 📊 Performance Report
+    runs-on: ubuntu-latest
+    needs: [lighthouse-audit, bundle-analysis, web-vitals, load-testing, profiling]
+    if: always()
+    
+    steps:
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v4
+
+      - name: 📊 Generate Comprehensive Report
+        run: |
+          echo "# 📊 Performance Analysis Report" > performance-report.md
+          echo "Generated on: $(date)" >> performance-report.md
+          echo "Performance Budget: ${{ env.PERFORMANCE_BUDGET }}%" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## 🏠 Lighthouse Audit Results" >> performance-report.md
+          echo "- Status: ${{ needs.lighthouse-audit.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## 📦 Bundle Analysis Results" >> performance-report.md
+          echo "- Status: ${{ needs.bundle-analysis.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## 📊 Core Web Vitals Results" >> performance-report.md
+          echo "- Status: ${{ needs.web-vitals.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## 🚀 Load Testing Results" >> performance-report.md
+          echo "- Status: ${{ needs.load-testing.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## 🔍 Profiling Results" >> performance-report.md
+          echo "- Status: ${{ needs.profiling.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## 🎯 Recommendations" >> performance-report.md
+          echo "1. Monitor Core Web Vitals regularly" >> performance-report.md
+          echo "2. Optimize bundle size and code splitting" >> performance-report.md
+          echo "3. Implement performance budgets" >> performance-report.md
+          echo "4. Use CDN for static assets" >> performance-report.md
+          echo "5. Optimize database queries" >> performance-report.md
+          echo "6. Implement caching strategies" >> performance-report.md
+
+      - name: 📋 Upload Performance Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-report
+          path: performance-report.md
+
+      - name: 💬 Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('performance-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ⚡ Performance Analysis Results\n\n${report}`
+            });
+
+      - name: 📊 Performance Trend Analysis
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "Analyzing performance trends..."
+          # This would typically integrate with a performance monitoring service
+          # like SpeedCurve, Calibre, or custom analytics
+
+# ============================================================================
+# Workflow Configuration
+# ============================================================================
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

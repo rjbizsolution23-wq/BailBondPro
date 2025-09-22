@@ -1,0 +1,760 @@
+name: 🚀 Production Deployment
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  workflow_run:
+    workflows: ["🚀 CI/CD Pipeline"]
+    types: [completed]
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment Environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
+      force_deploy:
+        description: 'Force deployment (skip checks)'
+        required: false
+        default: false
+        type: boolean
+      skip_tests:
+        description: 'Skip pre-deployment tests'
+        required: false
+        default: false
+        type: boolean
+      rollback_version:
+        description: 'Rollback to specific version (leave empty for new deployment)'
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '8'
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+  POSTGRES_VERSION: '16'
+  REDIS_VERSION: '7'
+
+permissions:
+  contents: write
+  deployments: write
+  packages: write
+  pull-requests: write
+  id-token: write
+  actions: read
+  security-events: write
+
+concurrency:
+  group: deploy-${{ github.ref }}-${{ github.event.inputs.environment || 'auto' }}
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================================
+  # Pre-deployment Validation
+  # ============================================================================
+  
+  pre-deployment:
+    name: 🔍 Pre-deployment Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    outputs:
+      should_deploy: ${{ steps.validation.outputs.should_deploy }}
+      deployment_env: ${{ steps.validation.outputs.deployment_env }}
+      version: ${{ steps.validation.outputs.version }}
+      is_rollback: ${{ steps.validation.outputs.is_rollback }}
+      deployment_strategy: ${{ steps.validation.outputs.deployment_strategy }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Validate Deployment Conditions
+        id: validation
+        run: |
+          # Check if this is a rollback deployment
+          IS_ROLLBACK="false"
+          if [[ -n "${{ github.event.inputs.rollback_version }}" ]]; then
+            IS_ROLLBACK="true"
+            echo "🔄 Rollback deployment detected"
+          fi
+          echo "is_rollback=$IS_ROLLBACK" >> $GITHUB_OUTPUT
+          
+          # Determine deployment environment
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            DEPLOY_ENV="${{ github.event.inputs.environment }}"
+            FORCE_DEPLOY="${{ github.event.inputs.force_deploy }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            DEPLOY_ENV="production"
+            FORCE_DEPLOY="false"
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            DEPLOY_ENV="staging"
+            FORCE_DEPLOY="false"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            DEPLOY_ENV="production"
+            FORCE_DEPLOY="false"
+          else
+            DEPLOY_ENV="staging"
+            FORCE_DEPLOY="false"
+          fi
+          
+          echo "deployment_env=$DEPLOY_ENV" >> $GITHUB_OUTPUT
+          
+          # Determine deployment strategy
+          if [[ "$DEPLOY_ENV" == "production" ]]; then
+            echo "deployment_strategy=blue-green" >> $GITHUB_OUTPUT
+          else
+            echo "deployment_strategy=rolling" >> $GITHUB_OUTPUT
+          fi
+          
+          # Generate version
+          if [[ "$IS_ROLLBACK" == "true" ]]; then
+            VERSION="${{ github.event.inputs.rollback_version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="$(date +%Y%m%d)-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Check if we should deploy
+          SHOULD_DEPLOY="true"
+          
+          if [[ "$FORCE_DEPLOY" != "true" && "$IS_ROLLBACK" != "true" ]]; then
+            # Check if CI workflow completed successfully
+            if [[ "${{ github.event_name }}" == "workflow_run" && "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+              echo "❌ CI workflow failed. Skipping deployment."
+              SHOULD_DEPLOY="false"
+            fi
+            
+            # Additional validation for production deployments
+            if [[ "$DEPLOY_ENV" == "production" ]]; then
+              # Check for critical security issues
+              echo "🔒 Running production security validation..."
+              
+              # Validate environment variables are set
+              REQUIRED_SECRETS=("DATABASE_URL" "JWT_SECRET" "ENCRYPTION_KEY")
+              for secret in "${REQUIRED_SECRETS[@]}"; do
+                if [[ -z "${!secret}" ]]; then
+                  echo "❌ Required secret $secret not set for production"
+                  SHOULD_DEPLOY="false"
+                fi
+              done
+            fi
+          fi
+          
+          echo "should_deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+          
+          echo "🎯 Deployment Configuration:"
+          echo "  Environment: $DEPLOY_ENV"
+          echo "  Version: $VERSION"
+          echo "  Should Deploy: $SHOULD_DEPLOY"
+          echo "  Force Deploy: $FORCE_DEPLOY"
+          echo "  Is Rollback: $IS_ROLLBACK"
+          echo "  Strategy: $([ "$DEPLOY_ENV" == "production" ] && echo "blue-green" || echo "rolling")"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+
+      - name: 🔒 Security Pre-check
+        if: steps.validation.outputs.deployment_env == 'production'
+        run: |
+          echo "🔍 Running production security pre-checks..."
+          
+          # Check for secrets in environment files
+          if find . -name "*.env*" -not -path "./.git/*" | head -1 | grep -q .; then
+            echo "⚠️ Environment files detected. Ensure no secrets are committed."
+            find . -name "*.env*" -not -path "./.git/*" -exec echo "  Found: {}" \;
+          fi
+          
+          # Check for TODO/FIXME in critical files
+          if grep -r "TODO\|FIXME\|HACK" --include="*.ts" --include="*.js" src/ | head -5; then
+            echo "⚠️ Found TODO/FIXME items in source code. Review before production deployment."
+          fi
+
+  # ============================================================================
+  # Build & Package
+  # ============================================================================
+  
+  build:
+    name: 🏗️ Build Application
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: pre-deployment
+    if: needs.pre-deployment.outputs.should_deploy == 'true'
+    strategy:
+      matrix:
+        target: [frontend, backend]
+    outputs:
+      build_id: ${{ steps.build.outputs.build_id }}
+      build_artifacts: ${{ steps.build.outputs.artifacts }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 🔧 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🏗️ Build Application
+        id: build
+        run: |
+          BUILD_ID="build-$(date +%s)-${GITHUB_SHA:0:7}"
+          echo "build_id=$BUILD_ID" >> $GITHUB_OUTPUT
+          
+          # Build based on matrix target
+          if [[ "${{ matrix.target }}" == "frontend" ]]; then
+            echo "🎨 Building frontend..."
+            pnpm build:frontend
+            
+            # Generate build manifest
+            echo "{
+              \"buildId\": \"$BUILD_ID\",
+              \"target\": \"frontend\",
+              \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+              \"commit\": \"$GITHUB_SHA\",
+              \"version\": \"${{ needs.pre-deployment.outputs.version }}\",
+              \"environment\": \"${{ needs.pre-deployment.outputs.deployment_env }}\"
+            }" > dist/build-manifest.json
+            
+            # Bundle analysis
+            if command -v npx &> /dev/null; then
+              npx webpack-bundle-analyzer dist/stats.json dist --report --mode static --no-open || true
+            fi
+            
+            echo "artifacts=dist/" >> $GITHUB_OUTPUT
+            
+          elif [[ "${{ matrix.target }}" == "backend" ]]; then
+            echo "⚙️ Building backend..."
+            pnpm build:backend
+            
+            # Generate build manifest
+            echo "{
+              \"buildId\": \"$BUILD_ID\",
+              \"target\": \"backend\",
+              \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+              \"commit\": \"$GITHUB_SHA\",
+              \"version\": \"${{ needs.pre-deployment.outputs.version }}\",
+              \"environment\": \"${{ needs.pre-deployment.outputs.deployment_env }}\"
+            }" > build/build-manifest.json
+            
+            echo "artifacts=build/" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🔍 Verify Build
+        run: |
+          if [[ "${{ matrix.target }}" == "frontend" ]]; then
+            # Verify frontend build
+            if [[ ! -f "dist/index.html" ]]; then
+              echo "❌ Frontend build failed - index.html not found"
+              exit 1
+            fi
+            
+            # Check for critical assets
+            if [[ ! -d "dist/assets" ]]; then
+              echo "❌ Frontend build failed - assets directory not found"
+              exit 1
+            fi
+            
+            # Verify build size
+            BUILD_SIZE=$(du -sh dist/ | cut -f1)
+            echo "📊 Frontend build size: $BUILD_SIZE"
+            
+          elif [[ "${{ matrix.target }}" == "backend" ]]; then
+            # Verify backend build
+            if [[ ! -f "build/index.js" ]]; then
+              echo "❌ Backend build failed - index.js not found"
+              exit 1
+            fi
+            
+            # Test backend startup
+            timeout 10s node build/index.js --test || echo "⚠️ Backend test startup failed"
+            
+            BUILD_SIZE=$(du -sh build/ | cut -f1)
+            echo "📊 Backend build size: $BUILD_SIZE"
+          fi
+
+      - name: 📤 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target }}-${{ needs.pre-deployment.outputs.version }}
+          path: ${{ steps.build.outputs.artifacts }}
+          retention-days: 30
+          compression-level: 6
+
+      - name: 🏷️ Tag Build
+        if: needs.pre-deployment.outputs.deployment_env == 'production'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          TAG_NAME="build-${{ matrix.target }}-${{ needs.pre-deployment.outputs.version }}"
+          git tag -a "$TAG_NAME" -m "Build ${{ matrix.target }} for version ${{ needs.pre-deployment.outputs.version }}"
+          git push origin "$TAG_NAME" || echo "Tag already exists"
+
+  # ============================================================================
+  # Database Migration (if needed)
+  # ============================================================================
+  
+  database-migration:
+    name: 🗄️ Database Migration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [pre-deployment, build]
+    if: needs.pre-deployment.outputs.should_deploy == 'true' && needs.pre-deployment.outputs.is_rollback != 'true'
+    environment: 
+      name: ${{ needs.pre-deployment.outputs.deployment_env }}-db
+      url: ${{ steps.migration.outputs.db_url }}
+    outputs:
+      migration_status: ${{ steps.migration.outputs.status }}
+      migration_version: ${{ steps.migration.outputs.version }}
+      backup_created: ${{ steps.backup.outputs.backup_id }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 🔧 Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🔒 Database Backup
+        id: backup
+        run: |
+          echo "🔄 Creating database backup before migration..."
+          
+          BACKUP_ID="backup-$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA:0:7}"
+          echo "backup_id=$BACKUP_ID" >> $GITHUB_OUTPUT
+          
+          # Create backup based on database type
+          if [[ "$DATABASE_URL" == postgres* ]]; then
+            echo "📊 Creating PostgreSQL backup..."
+            
+            # Extract connection details
+            DB_HOST=$(echo $DATABASE_URL | sed -n 's/.*@\([^:]*\):.*/\1/p')
+            DB_NAME=$(echo $DATABASE_URL | sed -n 's/.*\/\([^?]*\).*/\1/p')
+            
+            # Create backup
+            pg_dump "$DATABASE_URL" > "${BACKUP_ID}.sql"
+            
+            # Compress backup
+            gzip "${BACKUP_ID}.sql"
+            
+            # Upload to backup storage (adjust based on your setup)
+            if command -v aws &> /dev/null; then
+              aws s3 cp "${BACKUP_ID}.sql.gz" "s3://${{ secrets.BACKUP_BUCKET }}/database-backups/" || echo "⚠️ Backup upload failed"
+            fi
+            
+          elif [[ "$DATABASE_URL" == mysql* ]]; then
+            echo "📊 Creating MySQL backup..."
+            mysqldump --single-transaction --routines --triggers "$DATABASE_URL" > "${BACKUP_ID}.sql"
+            gzip "${BACKUP_ID}.sql"
+            
+          else
+            echo "⚠️ Unknown database type, skipping backup"
+          fi
+          
+          echo "✅ Database backup created: $BACKUP_ID"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: 🔍 Migration Dry Run
+        run: |
+          echo "🧪 Running migration dry run..."
+          
+          # Check for pending migrations
+          if command -v prisma &> /dev/null; then
+            echo "📊 Checking Prisma migrations..."
+            npx prisma migrate status || echo "⚠️ Migration status check failed"
+            npx prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-schema-datasource prisma/schema.prisma --script > migration-preview.sql || echo "No changes detected"
+            
+          elif command -v drizzle-kit &> /dev/null; then
+            echo "📊 Checking Drizzle migrations..."
+            npx drizzle-kit generate:pg --schema=./src/db/schema.ts || echo "No changes detected"
+            
+          elif [[ -d "migrations" ]]; then
+            echo "📊 Checking custom migrations..."
+            # Custom migration logic here
+            ls -la migrations/
+          fi
+          
+          # Display migration preview if available
+          if [[ -f "migration-preview.sql" ]]; then
+            echo "📋 Migration Preview:"
+            cat migration-preview.sql
+          fi
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: 🚀 Run Database Migration
+        id: migration
+        run: |
+          echo "🔄 Running database migrations..."
+          
+          MIGRATION_START=$(date +%s)
+          
+          # Run migrations based on ORM/tool
+          if command -v prisma &> /dev/null; then
+            echo "📊 Running Prisma migrations..."
+            npx prisma migrate deploy
+            MIGRATION_VERSION=$(npx prisma migrate status --json | jq -r '.appliedMigrations[-1].name' || echo "unknown")
+            
+          elif command -v drizzle-kit &> /dev/null; then
+            echo "📊 Running Drizzle migrations..."
+            npx drizzle-kit push:pg --schema=./src/db/schema.ts
+            MIGRATION_VERSION="drizzle-$(date +%Y%m%d-%H%M%S)"
+            
+          elif [[ -f "migrate.js" ]]; then
+            echo "📊 Running custom migrations..."
+            node migrate.js
+            MIGRATION_VERSION="custom-$(date +%Y%m%d-%H%M%S)"
+            
+          else
+            echo "⚠️ No migration tool detected, skipping..."
+            MIGRATION_VERSION="none"
+          fi
+          
+          MIGRATION_END=$(date +%s)
+          MIGRATION_DURATION=$((MIGRATION_END - MIGRATION_START))
+          
+          echo "version=$MIGRATION_VERSION" >> $GITHUB_OUTPUT
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "db_url=${{ secrets.DATABASE_URL }}" >> $GITHUB_OUTPUT
+          
+          echo "✅ Migration completed in ${MIGRATION_DURATION}s"
+          echo "📋 Migration version: $MIGRATION_VERSION"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: 🔍 Post-Migration Verification
+        run: |
+          echo "🧪 Verifying database state after migration..."
+          
+          # Basic connectivity test
+          if command -v psql &> /dev/null && [[ "$DATABASE_URL" == postgres* ]]; then
+            echo "📊 Testing PostgreSQL connection..."
+            psql "$DATABASE_URL" -c "SELECT version();" || exit 1
+            
+            # Check table counts
+            TABLE_COUNT=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';")
+            echo "📊 Public tables: $TABLE_COUNT"
+            
+          elif command -v mysql &> /dev/null && [[ "$DATABASE_URL" == mysql* ]]; then
+            echo "📊 Testing MySQL connection..."
+            mysql "$DATABASE_URL" -e "SELECT VERSION();" || exit 1
+          fi
+          
+          # Run application-level health checks
+          if [[ -f "scripts/db-health-check.js" ]]; then
+            echo "🏥 Running application database health checks..."
+            node scripts/db-health-check.js
+          fi
+          
+          echo "✅ Database verification completed"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: 📊 Migration Report
+        if: always()
+        run: |
+          echo "📋 Migration Summary Report"
+          echo "=========================="
+          echo "Environment: ${{ needs.pre-deployment.outputs.deployment_env }}"
+          echo "Version: ${{ needs.pre-deployment.outputs.version }}"
+          echo "Migration Status: ${{ steps.migration.outputs.status }}"
+          echo "Migration Version: ${{ steps.migration.outputs.version }}"
+          echo "Backup Created: ${{ steps.backup.outputs.backup_id }}"
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          
+          # Save report as artifact
+          cat > migration-report.json << EOF
+          {
+            "environment": "${{ needs.pre-deployment.outputs.deployment_env }}",
+            "version": "${{ needs.pre-deployment.outputs.version }}",
+            "migrationStatus": "${{ steps.migration.outputs.status }}",
+            "migrationVersion": "${{ steps.migration.outputs.version }}",
+            "backupId": "${{ steps.backup.outputs.backup_id }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+      - name: 📤 Upload Migration Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-report-${{ needs.pre-deployment.outputs.version }}
+          path: |
+            migration-report.json
+            migration-preview.sql
+          retention-days: 90
+
+  # ============================================================================
+  # Deploy to Vercel
+  # ============================================================================
+  
+  deploy-vercel:
+    name: 🚀 Deploy to Vercel
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, build]
+    if: needs.pre-deployment.outputs.should_deploy == 'true'
+    environment: ${{ needs.pre-deployment.outputs.deployment_env }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ needs.pre-deployment.outputs.version }}
+
+      - name: 🚀 Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        id: vercel-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: >-
+            ${{ needs.pre-deployment.outputs.deployment_env == 'production' && '--prod' || '--target preview' }}
+            --build-env NEXT_PUBLIC_VERSION=${{ needs.pre-deployment.outputs.version }}
+            --build-env NEXT_PUBLIC_ENV=${{ needs.pre-deployment.outputs.deployment_env }}
+
+      - name: 📊 Deployment Summary
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "🌐 URL: ${{ steps.vercel-deploy.outputs.preview-url }}"
+          echo "📦 Version: ${{ needs.pre-deployment.outputs.version }}"
+          echo "🎯 Environment: ${{ needs.pre-deployment.outputs.deployment_env }}"
+
+      - name: 💾 Save Deployment Info
+        run: |
+          echo "DEPLOYMENT_URL=${{ steps.vercel-deploy.outputs.preview-url }}" >> $GITHUB_ENV
+          echo "DEPLOYMENT_VERSION=${{ needs.pre-deployment.outputs.version }}" >> $GITHUB_ENV
+
+  # ============================================================================
+  # Deploy to Railway (Alternative/Backup)
+  # ============================================================================
+  
+  deploy-railway:
+    name: 🚂 Deploy to Railway
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, build]
+    if: needs.pre-deployment.outputs.should_deploy == 'true' && vars.ENABLE_RAILWAY_DEPLOY == 'true'
+    environment: ${{ needs.pre-deployment.outputs.deployment_env }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ needs.pre-deployment.outputs.version }}
+
+      - name: 🚂 Deploy to Railway
+        uses: bervProject/railway-deploy@v1.0.0
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: ${{ vars.RAILWAY_SERVICE_NAME || 'bailbondpro' }}
+          environment: ${{ needs.pre-deployment.outputs.deployment_env }}
+
+  # ============================================================================
+  # Post-deployment Verification
+  # ============================================================================
+  
+  post-deployment:
+    name: ✅ Post-deployment Verification
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, deploy-vercel]
+    if: always() && needs.deploy-vercel.result == 'success'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ⏳ Wait for Deployment
+        run: |
+          echo "⏳ Waiting for deployment to be ready..."
+          sleep 30
+
+      - name: 🔍 Health Check
+        run: |
+          DEPLOYMENT_URL="${{ env.DEPLOYMENT_URL }}"
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "❌ Deployment URL not found"
+            exit 1
+          fi
+          
+          echo "🔍 Checking deployment health at: $DEPLOYMENT_URL"
+          
+          # Health check with retries
+          for i in {1..5}; do
+            if curl -f -s "$DEPLOYMENT_URL/api/health" > /dev/null 2>&1; then
+              echo "✅ Health check passed (attempt $i)"
+              break
+            elif curl -f -s "$DEPLOYMENT_URL" > /dev/null 2>&1; then
+              echo "✅ Basic connectivity check passed (attempt $i)"
+              break
+            else
+              echo "⏳ Health check failed (attempt $i/5), retrying in 10s..."
+              sleep 10
+            fi
+            
+            if [ $i -eq 5 ]; then
+              echo "❌ Health check failed after 5 attempts"
+              exit 1
+            fi
+          done
+
+      - name: 🧪 Smoke Tests
+        run: |
+          DEPLOYMENT_URL="${{ env.DEPLOYMENT_URL }}"
+          
+          echo "🧪 Running smoke tests..."
+          
+          # Test critical pages
+          PAGES=("/" "/login" "/dashboard")
+          
+          for page in "${PAGES[@]}"; do
+            echo "Testing $page..."
+            if curl -f -s "$DEPLOYMENT_URL$page" > /dev/null; then
+              echo "✅ $page is accessible"
+            else
+              echo "❌ $page is not accessible"
+              exit 1
+            fi
+          done
+          
+          echo "✅ All smoke tests passed"
+
+      - name: 📊 Performance Check
+        run: |
+          DEPLOYMENT_URL="${{ env.DEPLOYMENT_URL }}"
+          
+          echo "📊 Running performance check..."
+          
+          # Simple performance test
+          RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' "$DEPLOYMENT_URL")
+          echo "⏱️ Response time: ${RESPONSE_TIME}s"
+          
+          # Check if response time is acceptable (< 3 seconds)
+          if (( $(echo "$RESPONSE_TIME < 3.0" | bc -l) )); then
+            echo "✅ Performance check passed"
+          else
+            echo "⚠️ Performance check warning: Response time > 3s"
+          fi
+
+  # ============================================================================
+  # Notifications & Cleanup
+  # ============================================================================
+  
+  notify:
+    name: 📢 Deployment Notifications
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, deploy-vercel, post-deployment]
+    if: always()
+    steps:
+      - name: 📢 Success Notification
+        if: needs.deploy-vercel.result == 'success' && needs.post-deployment.result == 'success'
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "🎉 Deployment Successful!",
+                "attachments": [
+                  {
+                    "color": "good",
+                    "fields": [
+                      {"title": "Environment", "value": "${{ needs.pre-deployment.outputs.deployment_env }}", "short": true},
+                      {"title": "Version", "value": "${{ needs.pre-deployment.outputs.version }}", "short": true},
+                      {"title": "URL", "value": "${{ env.DEPLOYMENT_URL }}", "short": false},
+                      {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                      {"title": "Author", "value": "${{ github.actor }}", "short": true}
+                    ]
+                  }
+                ]
+              }' \
+              ${{ secrets.SLACK_WEBHOOK_URL }}
+          fi
+
+      - name: 📢 Failure Notification
+        if: failure()
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "❌ Deployment Failed",
+                "attachments": [
+                  {
+                    "color": "danger",
+                    "fields": [
+                      {"title": "Environment", "value": "${{ needs.pre-deployment.outputs.deployment_env }}", "short": true},
+                      {"title": "Version", "value": "${{ needs.pre-deployment.outputs.version }}", "short": true},
+                      {"title": "Workflow", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false},
+                      {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                      {"title": "Author", "value": "${{ github.actor }}", "short": true}
+                    ]
+                  }
+                ]
+              }' \
+              ${{ secrets.SLACK_WEBHOOK_URL }}
+          fi
+
+      - name: 🏷️ Create Release Tag
+        if: needs.deploy-vercel.result == 'success' && needs.pre-deployment.outputs.deployment_env == 'production' && !startsWith(github.ref, 'refs/tags/')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ needs.pre-deployment.outputs.version }}';
+            const tagName = `release-${version}`;
+            
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${tagName}`,
+                sha: context.sha
+              });
+              
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tagName,
+                name: `Release ${version}`,
+                body: `🚀 Production deployment of BailBondPro\n\n**Version:** ${version}\n**Deployed:** ${new Date().toISOString()}\n**Commit:** ${context.sha}\n\n**Deployment URL:** ${{ env.DEPLOYMENT_URL }}`,
+                draft: false,
+                prerelease: false
+              });
+              
+              console.log(`✅ Created release tag: ${tagName}`);
+            } catch (error) {
+              console.log(`ℹ️ Release tag creation skipped: ${error.message}`);
+            }

@@ -1,0 +1,193 @@
+# NOTICE
+
+BailBondPro - Comprehensive Bail Bond Management System
+Copyright (c) 2024 Rick Jefferson Solutions
+
+This product includes software developed by Rick Jefferson Solutions and the open source community.
+
+## Third-Party Components
+
+This software includes the following third-party components:
+
+### Frontend Dependencies
+
+#### React Ecosystem
+- **React** (MIT License) - Copyright (c) Meta Platforms, Inc. and affiliates
+- **React DOM** (MIT License) - Copyright (c) Meta Platforms, Inc. and affiliates
+- **React Router** (MIT License) - Copyright (c) Remix Software Inc.
+- **React Hook Form** (MIT License) - Copyright (c) 2019-present Beier(Bill) Luo
+
+#### UI Components and Styling
+- **Tailwind CSS** (MIT License) - Copyright (c) Tailwind Labs, Inc.
+- **Headless UI** (MIT License) - Copyright (c) Tailwind Labs, Inc.
+- **Heroicons** (MIT License) - Copyright (c) Tailwind Labs, Inc.
+- **Framer Motion** (MIT License) - Copyright (c) 2018 Framer B.V.
+- **Lucide React** (ISC License) - Copyright (c) 2022 Lucide Contributors
+
+#### State Management and Data Fetching
+- **Zustand** (MIT License) - Copyright (c) 2019 Paul Henschel
+- **TanStack Query** (MIT License) - Copyright (c) 2021 Tanner Linsley
+- **Axios** (MIT License) - Copyright (c) 2014-present Matt Zabriskie
+
+#### Utilities and Tools
+- **Date-fns** (MIT License) - Copyright (c) 2021 Sasha Koss and Lesha Koss
+- **Lodash** (MIT License) - Copyright OpenJS Foundation and other contributors
+- **Clsx** (MIT License) - Copyright (c) Luke Edwards
+- **React Hot Toast** (MIT License) - Copyright (c) 2020 Timo Lins
+
+### Backend Dependencies
+
+#### Node.js and Express
+- **Node.js** (MIT License) - Copyright Node.js contributors
+- **Express** (MIT License) - Copyright (c) 2009-2014 TJ Holowaychuk
+- **Express Validator** (MIT License) - Copyright (c) 2010 Chris O'Hara
+
+#### Database and ORM
+- **Prisma** (Apache License 2.0) - Copyright (c) 2018-2023 Prisma Data, Inc.
+- **PostgreSQL** (PostgreSQL License) - Copyright (c) 1996-2023, PostgreSQL Global Development Group
+- **Redis** (BSD 3-Clause License) - Copyright (c) 2009-2012, Salvatore Sanfilippo
+
+#### Authentication and Security
+- **JSON Web Token** (MIT License) - Copyright (c) 2015 Auth0, Inc.
+- **bcryptjs** (MIT License) - Copyright (c) 2012 Nevins Bartolomeo
+- **Helmet** (MIT License) - Copyright (c) 2012-2019 Adam Baldwin
+- **CORS** (MIT License) - Copyright (c) 2013 Troy Goode
+
+#### Payment Processing
+- **Stripe** (MIT License) - Copyright (c) 2011-2023 Stripe, Inc.
+- **PayPal SDK** (Apache License 2.0) - Copyright (c) PayPal, Inc.
+
+#### File Processing and Storage
+- **Multer** (MIT License) - Copyright (c) 2014 Hage Yaapa
+- **Sharp** (Apache License 2.0) - Copyright 2013 Lovell Fuller
+- **AWS SDK** (Apache License 2.0) - Copyright 2012-2023 Amazon.com, Inc.
+
+#### Communication and Notifications
+- **Nodemailer** (MIT License) - Copyright (c) 2011-2019 Andris Reinman
+- **Twilio** (MIT License) - Copyright (c) 2010-2023 Twilio, Inc.
+- **Socket.io** (MIT License) - Copyright (c) 2014-2018 Automattic
+
+### Development and Build Tools
+
+#### Build Tools
+- **Vite** (MIT License) - Copyright (c) 2019-present, Yuxi (Evan) You
+- **Webpack** (MIT License) - Copyright JS Foundation and other contributors
+- **Babel** (MIT License) - Copyright (c) 2014-present Sebastian McKenzie
+
+#### Testing
+- **Jest** (MIT License) - Copyright (c) Meta Platforms, Inc. and affiliates
+- **Testing Library** (MIT License) - Copyright (c) 2017-2021 Kent C. Dodds
+- **Cypress** (MIT License) - Copyright (c) 2023 Cypress.io
+- **Playwright** (Apache License 2.0) - Copyright (c) Microsoft Corporation
+
+#### Code Quality
+- **ESLint** (MIT License) - Copyright OpenJS Foundation and other contributors
+- **Prettier** (MIT License) - Copyright James Long and contributors
+- **TypeScript** (Apache License 2.0) - Copyright (c) Microsoft Corporation
+
+#### DevOps and Deployment
+- **Docker** (Apache License 2.0) - Copyright (c) 2013-2023 Docker, Inc.
+- **PM2** (AGPL-3.0 License) - Copyright (c) 2013-2017 Unitech
+
+## Fonts and Icons
+
+### Typography
+- **Inter Font** (SIL Open Font License 1.1) - Copyright (c) 2016-2020 The Inter Project Authors
+- **JetBrains Mono** (SIL Open Font License 1.1) - Copyright (c) 2020 The JetBrains Mono Project Authors
+
+### Icon Sets
+- **Heroicons** (MIT License) - Copyright (c) Tailwind Labs, Inc.
+- **Lucide Icons** (ISC License) - Copyright (c) 2022 Lucide Contributors
+- **Feather Icons** (MIT License) - Copyright (c) 2013-2017 Cole Bemis
+
+## Images and Media
+
+### Stock Photos and Illustrations
+- **Unsplash** (Unsplash License) - Various photographers and contributors
+- **Pexels** (Pexels License) - Various photographers and contributors
+- **Illustrations** (Custom/Licensed) - Created specifically for BailBondPro
+
+## Services and APIs
+
+### Third-Party Services
+- **Stripe Payment Processing** - Stripe, Inc.
+- **PayPal Payment Processing** - PayPal, Inc.
+- **Twilio SMS/Voice Services** - Twilio, Inc.
+- **SendGrid Email Services** - Twilio SendGrid, Inc.
+- **Google Maps API** - Google LLC
+- **AWS Cloud Services** - Amazon Web Services, Inc.
+
+### Data Providers
+- **Credit Reporting APIs** - Various licensed providers
+- **Address Validation Services** - USPS, Google, etc.
+- **Background Check Services** - Licensed third-party providers
+
+## Compliance and Regulatory
+
+### Industry Standards
+- **PCI DSS Compliance** - Payment Card Industry Security Standards Council
+- **SOC 2 Type II** - American Institute of CPAs (AICPA)
+- **GDPR Compliance** - European Union General Data Protection Regulation
+- **CCPA Compliance** - California Consumer Privacy Act
+
+### Financial Regulations
+- **FCRA** - Fair Credit Reporting Act
+- **FDCPA** - Fair Debt Collection Practices Act
+- **UCC** - Uniform Commercial Code
+- **State Bail Bond Regulations** - Various state regulatory bodies
+
+## Documentation and Resources
+
+### Documentation Tools
+- **GitBook** (MIT License) - GitBook SAS
+- **Docusaurus** (MIT License) - Copyright (c) Meta Platforms, Inc.
+- **Storybook** (MIT License) - Copyright (c) 2017-present Storybook
+
+### Learning Resources
+- **MDN Web Docs** (CC-BY-SA 2.5) - Mozilla Foundation
+- **React Documentation** (CC BY 4.0) - Meta Platforms, Inc.
+- **Node.js Documentation** (MIT License) - Node.js contributors
+
+## Attribution Requirements
+
+When redistributing this software, you must:
+
+1. **Preserve all copyright notices** in the source code
+2. **Include this NOTICE file** in any distribution
+3. **Maintain attribution** to original authors and contributors
+4. **Respect third-party licenses** and their requirements
+5. **Include license texts** for all third-party components
+
+## Trademark Notices
+
+- **BailBondPro** is a trademark of Rick Jefferson Solutions
+- **React** is a trademark of Meta Platforms, Inc.
+- **Node.js** is a trademark of Joyent, Inc.
+- **PostgreSQL** is a trademark of the PostgreSQL Global Development Group
+- **Stripe** is a trademark of Stripe, Inc.
+- **PayPal** is a trademark of PayPal, Inc.
+- **AWS** is a trademark of Amazon.com, Inc.
+- **Google** is a trademark of Google LLC
+- **Microsoft** is a trademark of Microsoft Corporation
+
+All other trademarks are the property of their respective owners.
+
+## Contact Information
+
+For questions about licensing, attributions, or third-party components:
+
+- **Email**: legal@bailbondpro.com
+- **Website**: https://bailbondpro.com
+- **GitHub**: https://github.com/bailbondpro/bailbondpro
+- **Documentation**: https://docs.bailbondpro.com
+
+## Updates and Changes
+
+This NOTICE file is updated regularly to reflect changes in dependencies and third-party components. For the most current version, please refer to the project repository.
+
+**Last Updated**: January 2024  
+**Version**: 1.0.0
+
+---
+
+**Note**: This software is provided under the MIT License. See the LICENSE file for the complete license text. The inclusion of third-party components does not imply endorsement by their respective authors or organizations.

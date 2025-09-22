@@ -1,0 +1,232 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "name": "bailbondpro",
+  "alias": ["bailbondpro.com", "www.bailbondpro.com"],
+  "regions": ["iad1", "sfo1", "lhr1", "fra1", "hnd1"],
+  "framework": "vite",
+  "buildCommand": "pnpm build",
+  "devCommand": "pnpm dev",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "public": true,
+  "github": {
+    "enabled": true,
+    "autoAlias": true,
+    "autoJobCancelation": true,
+    "silent": false
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "master": true
+    }
+  },
+  "builds": [
+    {
+      "src": "client/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist",
+        "framework": "vite"
+      }
+    },
+    {
+      "src": "server/index.ts",
+      "use": "@vercel/node",
+      "config": {
+        "maxLambdaSize": "50mb",
+        "includeFiles": [
+          "server/public/**",
+          "server/assets/**",
+          "server/locales/**",
+          "server/templates/**"
+        ]
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/health",
+      "dest": "/server/index.ts"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/server/index.ts"
+    },
+    {
+      "src": "/admin/(.*)",
+      "dest": "/client/dist/index.html",
+      "headers": {
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff"
+      }
+    },
+    {
+      "src": "/static/(.*)",
+      "dest": "/client/dist/$1",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      }
+    },
+    {
+      "src": "/assets/(.*)",
+      "dest": "/client/dist/assets/$1",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      }
+    },
+    {
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot))",
+      "dest": "/client/dist/$1",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      }
+    },
+    {
+      "src": "/sitemap.xml",
+      "dest": "/server/index.ts"
+    },
+    {
+      "src": "/robots.txt",
+      "dest": "/server/index.ts"
+    },
+    {
+      "src": "/docs/(.*)",
+      "dest": "/client/dist/index.html"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/client/dist/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://bailbondpro.com"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization, X-Requested-With"
+        },
+        {
+          "key": "Access-Control-Max-Age",
+          "value": "86400"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=31536000; includeSubDomains; preload"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none';"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=31536000; includeSubDomains; preload"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:; frame-src https://js.stripe.com; frame-ancestors 'none';"
+        }
+      ]
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/www.bailbondpro.com/(.*)",
+      "destination": "https://bailbondpro.com/$1",
+      "permanent": true
+    },
+    {
+      "source": "/login",
+      "destination": "/auth/signin",
+      "permanent": false
+    },
+    {
+      "source": "/register",
+      "destination": "/auth/signup",
+      "permanent": false
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/admin/dashboard",
+      "permanent": false
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production",
+    "DATABASE_URL": "@database_url",
+    "JWT_SECRET": "@jwt_secret",
+    "STRIPE_SECRET_KEY": "@stripe_secret_key",
+    "STRIPE_WEBHOOK_SECRET": "@stripe_webhook_secret",
+    "REDIS_URL": "@redis_url",
+    "SENDGRID_API_KEY": "@sendgrid_api_key",
+    "AWS_ACCESS_KEY_ID": "@aws_access_key_id",
+    "AWS_SECRET_ACCESS_KEY": "@aws_secret_access_key",
+    "AWS_REGION": "@aws_region",
+    "S3_BUCKET_NAME": "@s3_bucket_name"
+  },
+  "functions": {
+    "server/index.ts": {
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/cleanup",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/reports",
+      "schedule": "0 6 * * 1"
+    },
+    {
+      "path": "/api/cron/backup",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}

@@ -1,0 +1,344 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "version": "2",
+  "name": "BailBondPro",
+  "description": "Enterprise Bail Bond Management System",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "npm run build",
+    "installCommand": "npm ci --only=production",
+    "watchPatterns": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.json",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "vite.config.ts",
+      "tailwind.config.ts"
+    ],
+    "buildArgs": {
+      "NODE_ENV": "production",
+      "BUILD_TARGET": "production"
+    }
+  },
+  "deploy": {
+    "startCommand": "npm start",
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 300,
+    "healthcheckInterval": 30,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "gracefulShutdownTimeout": 30,
+    "replicas": {
+      "min": 1,
+      "max": 5
+    },
+    "resources": {
+      "cpu": "1000m",
+      "memory": "2Gi",
+      "disk": "10Gi"
+    }
+  },
+  "environments": {
+    "production": {
+      "variables": {
+        "NODE_ENV": "production",
+        "PORT": "3000",
+        "LOG_LEVEL": "info",
+        "ENABLE_METRICS": "true",
+        "ENABLE_TRACING": "true",
+        "CORS_ORIGIN": "https://bailbondpro.com",
+        "SESSION_TIMEOUT": "3600",
+        "RATE_LIMIT_WINDOW": "900",
+        "RATE_LIMIT_MAX": "1000"
+      },
+      "secrets": [
+        "DATABASE_URL",
+        "REDIS_URL",
+        "JWT_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "SENDGRID_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "ENCRYPTION_KEY",
+        "WEBHOOK_SECRET"
+      ]
+    },
+    "staging": {
+      "variables": {
+        "NODE_ENV": "staging",
+        "PORT": "3000",
+        "LOG_LEVEL": "debug",
+        "ENABLE_METRICS": "true",
+        "ENABLE_TRACING": "true",
+        "CORS_ORIGIN": "https://staging.bailbondpro.com",
+        "SESSION_TIMEOUT": "1800",
+        "RATE_LIMIT_WINDOW": "300",
+        "RATE_LIMIT_MAX": "500"
+      },
+      "secrets": [
+        "DATABASE_URL",
+        "REDIS_URL",
+        "JWT_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "SENDGRID_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "ENCRYPTION_KEY",
+        "WEBHOOK_SECRET"
+      ]
+    },
+    "development": {
+      "variables": {
+        "NODE_ENV": "development",
+        "PORT": "3000",
+        "LOG_LEVEL": "debug",
+        "ENABLE_METRICS": "false",
+        "ENABLE_TRACING": "false",
+        "CORS_ORIGIN": "*",
+        "SESSION_TIMEOUT": "86400",
+        "RATE_LIMIT_WINDOW": "60",
+        "RATE_LIMIT_MAX": "100"
+      }
+    }
+  },
+  "regions": ["us-west1", "us-east1", "eu-west1"],
+  "networking": {
+    "serviceDomain": "bailbondpro.railway.app",
+    "customDomain": {
+      "production": "bailbondpro.com",
+      "staging": "staging.bailbondpro.com"
+    },
+    "allowedOrigins": [
+      "https://bailbondpro.com",
+      "https://staging.bailbondpro.com",
+      "https://admin.bailbondpro.com"
+    ]
+  },
+  "monitoring": {
+    "healthchecks": {
+      "enabled": true,
+      "path": "/api/health",
+      "interval": 30,
+      "timeout": 10,
+      "retries": 3
+    },
+    "metrics": {
+      "enabled": true,
+      "path": "/api/metrics",
+      "scrapeInterval": "30s"
+    },
+    "logging": {
+      "level": "info",
+      "format": "json",
+      "retention": "30d"
+    },
+    "alerts": {
+      "enabled": true,
+      "channels": ["email", "slack"],
+      "thresholds": {
+        "cpu": 80,
+        "memory": 85,
+        "disk": 90,
+        "errorRate": 5
+      }
+    }
+  },
+  "security": {
+    "allowedIPs": [],
+    "blockedIPs": [],
+    "rateLimiting": {
+      "enabled": true,
+      "windowMs": 900000,
+      "max": 1000
+    },
+    "cors": {
+      "enabled": true,
+      "credentials": true,
+      "maxAge": 86400
+    },
+    "headers": {
+      "hsts": true,
+      "noSniff": true,
+      "frameOptions": "DENY",
+      "xssProtection": true
+    }
+  },
+  "services": [
+    {
+      "name": "bailbondpro-web",
+      "source": {
+        "type": "image",
+        "image": "bailbondpro:latest"
+      },
+      "variables": {
+        "DATABASE_URL": "${{Postgres.DATABASE_URL}}",
+        "REDIS_URL": "${{Redis.REDIS_URL}}",
+        "JWT_SECRET": "${{JWT_SECRET}}",
+        "STRIPE_SECRET_KEY": "${{STRIPE_SECRET_KEY}}",
+        "STRIPE_WEBHOOK_SECRET": "${{STRIPE_WEBHOOK_SECRET}}",
+        "SENDGRID_API_KEY": "${{SENDGRID_API_KEY}}",
+        "AWS_ACCESS_KEY_ID": "${{AWS_ACCESS_KEY_ID}}",
+        "AWS_SECRET_ACCESS_KEY": "${{AWS_SECRET_ACCESS_KEY}}",
+        "AWS_REGION": "${{AWS_REGION}}",
+        "S3_BUCKET_NAME": "${{S3_BUCKET_NAME}}",
+        "ENCRYPTION_KEY": "${{ENCRYPTION_KEY}}",
+        "WEBHOOK_SECRET": "${{WEBHOOK_SECRET}}",
+        "SENTRY_DSN": "${{SENTRY_DSN}}",
+        "DATADOG_API_KEY": "${{DATADOG_API_KEY}}"
+      },
+      "healthcheck": {
+        "path": "/api/health",
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3
+      },
+      "resources": {
+        "cpu": "1000m",
+        "memory": "2Gi",
+        "disk": "10Gi"
+      },
+      "scaling": {
+        "minReplicas": 1,
+        "maxReplicas": 5,
+        "targetCPU": 70,
+        "targetMemory": 80
+      }
+    },
+    {
+      "name": "postgres",
+      "source": {
+        "type": "image",
+        "image": "postgres:15-alpine"
+      },
+      "variables": {
+        "POSTGRES_DB": "bailbondpro",
+        "POSTGRES_USER": "bailbondpro",
+        "POSTGRES_PASSWORD": "${{POSTGRES_PASSWORD}}",
+        "POSTGRES_INITDB_ARGS": "--encoding=UTF-8 --lc-collate=C --lc-ctype=C",
+        "POSTGRES_HOST_AUTH_METHOD": "md5"
+      },
+      "volumes": [
+        {
+          "name": "postgres-data",
+          "mountPath": "/var/lib/postgresql/data"
+        }
+      ],
+      "resources": {
+        "cpu": "500m",
+        "memory": "1Gi",
+        "disk": "20Gi"
+      },
+      "healthcheck": {
+        "command": ["pg_isready", "-U", "bailbondpro", "-d", "bailbondpro"],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3
+      },
+      "backup": {
+        "enabled": true,
+        "schedule": "0 2 * * *",
+        "retention": "30d"
+      }
+    },
+    {
+      "name": "redis",
+      "source": {
+        "type": "image",
+        "image": "redis:7-alpine"
+      },
+      "variables": {
+        "REDIS_PASSWORD": "${{REDIS_PASSWORD}}",
+        "REDIS_MAXMEMORY": "512mb",
+        "REDIS_MAXMEMORY_POLICY": "allkeys-lru"
+      },
+      "volumes": [
+        {
+          "name": "redis-data",
+          "mountPath": "/data"
+        }
+      ],
+      "resources": {
+        "cpu": "250m",
+        "memory": "512Mi",
+        "disk": "5Gi"
+      },
+      "healthcheck": {
+        "command": ["redis-cli", "ping"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "postgres-data",
+      "size": "20GB",
+      "type": "persistent",
+      "backup": {
+        "enabled": true,
+        "schedule": "0 2 * * *",
+        "retention": "30d"
+      }
+    },
+    {
+      "name": "redis-data",
+      "size": "5GB",
+      "type": "persistent",
+      "backup": {
+        "enabled": true,
+        "schedule": "0 3 * * *",
+        "retention": "7d"
+      }
+    }
+  ],
+  "cron": [
+    {
+      "name": "database-backup",
+      "schedule": "0 2 * * *",
+      "command": "pg_dump $DATABASE_URL > /backups/db_$(date +%Y%m%d_%H%M%S).sql"
+    },
+    {
+      "name": "cleanup-logs",
+      "schedule": "0 1 * * 0",
+      "command": "find /var/log -name '*.log' -mtime +7 -delete"
+    },
+    {
+      "name": "health-report",
+      "schedule": "0 8 * * 1",
+      "command": "curl -X POST $WEBHOOK_URL -d '{\"type\":\"health_report\"}'"
+    }
+  ],
+  "observability": {
+    "metrics": {
+      "enabled": true,
+      "port": 9090,
+      "path": "/metrics"
+    },
+    "tracing": {
+      "enabled": true,
+      "jaeger": {
+        "endpoint": "${{JAEGER_ENDPOINT}}",
+        "serviceName": "bailbondpro"
+      }
+    },
+    "logging": {
+      "driver": "json-file",
+      "options": {
+        "max-size": "10m",
+        "max-file": "3"
+      }
+    }
+  },
+  "experimental": {
+    "buildCache": true,
+    "parallelBuilds": true,
+    "edgeFunctions": false
+  }
+}

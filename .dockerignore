@@ -1,0 +1,331 @@
+# ============================================================================
+# BailBondPro Docker Ignore Configuration
+# Optimized for build performance and security
+# ============================================================================
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+.vite/
+.turbo/
+
+# Environment files
+.env
+.env.*
+!.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Documentation
+*.md
+!README.md
+docs/
+wiki/
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+test-results.xml
+junit.xml
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# Dependency directories
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# Next.js build output
+.next/
+out/
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+public
+
+# Storybook build outputs
+.out
+.storybook-out
+storybook-static
+
+# Temporary folders
+tmp/
+temp/
+
+# Uploads and user content
+uploads/
+user-uploads/
+attachments/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+database.db
+
+# Backup files
+*.backup
+*.bak
+backups/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+azure-pipelines.yml
+Jenkinsfile
+
+# Deployment
+.vercel/
+.netlify/
+.railway/
+.render/
+.fly/
+
+# Package managers
+.pnpm-store/
+.yarn/
+.npm/
+
+# Linting and formatting
+.eslintrc*
+.prettierrc*
+.stylelintrc*
+.editorconfig
+
+# Configuration files
+*.config.js
+*.config.ts
+*.config.mjs
+!vite.config.ts
+!tailwind.config.ts
+!drizzle.config.ts
+
+# Security
+.env*
+!.env.example
+secrets/
+private/
+keys/
+certificates/
+*.pem
+*.key
+*.crt
+
+# Monitoring and analytics
+.sentry/
+newrelic.js
+
+# Local development
+.local/
+.cache/
+.temp/
+
+# Build tools
+.turbo/
+.swc/
+.babel-cache/
+
+# Package lock files (keep only one)
+package-lock.json
+yarn.lock
+# Keep pnpm-lock.yaml
+
+# Misc
+*.tgz
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# IDE specific
+.vscode/
+.idea/
+*.sublime-*
+*.code-workspace
+
+# OS specific
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Large media files
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.mkv
+*.m4v
+*.3gp
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.wma
+*.m4a
+
+# Image files (keep small ones for UI)
+*.psd
+*.ai
+*.eps
+*.svg
+*.tiff
+*.bmp
+*.raw
+
+# Development tools
+.husky/
+.commitlintrc*
+.lintstagedrc*
+.releaserc*
+.semantic-release*
+
+# Performance monitoring
+.clinic/
+.0x/
+
+# Profiling
+*.cpuprofile
+*.heapprofile
+*.heapsnapshot
+
+# Serverless
+.serverless/
+.aws-sam/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Kubernetes
+*.yaml
+*.yml
+!docker-compose.yml
+!docker-compose.*.yml
+
+# Scripts (security consideration)
+scripts/
+*.sh
+*.bat
+*.ps1
+
+# Local configuration overrides
+local.json
+local.js
+local.ts

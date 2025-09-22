@@ -1,0 +1,695 @@
+name: 💾 Backup & Disaster Recovery
+
+on:
+  schedule:
+    # Daily backup at 2 AM UTC
+    - cron: '0 2 * * *'
+    # Weekly full backup on Sundays at 1 AM UTC
+    - cron: '0 1 * * 0'
+  workflow_dispatch:
+    inputs:
+      backup_type:
+        description: 'Type of backup to perform'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+          - incremental
+          - full
+          - database-only
+          - files-only
+          - configuration-only
+      retention_days:
+        description: 'Backup retention period (days)'
+        required: false
+        default: '30'
+        type: string
+      encrypt_backup:
+        description: 'Encrypt backup files'
+        required: false
+        default: true
+        type: boolean
+      test_restore:
+        description: 'Test backup restoration'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '20'
+  BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: 'us-east-1'
+  S3_BACKUP_BUCKET: ${{ secrets.S3_BACKUP_BUCKET }}
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  BACKUP_RETENTION_DAYS: ${{ github.event.inputs.retention_days || '30' }}
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+concurrency:
+  group: backup-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================================
+  # Pre-Backup Validation
+  # ============================================================================
+  
+  pre-backup-validation:
+    name: 🔍 Pre-Backup Validation
+    runs-on: ubuntu-latest
+    
+    outputs:
+      backup_id: ${{ steps.generate_id.outputs.backup_id }}
+      backup_timestamp: ${{ steps.generate_id.outputs.backup_timestamp }}
+      validation_passed: ${{ steps.validation.outputs.passed }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🆔 Generate Backup ID
+        id: generate_id
+        run: |
+          BACKUP_ID="backup-$(date +%Y%m%d-%H%M%S)-${{ github.run_number }}"
+          BACKUP_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "backup_id=$BACKUP_ID" >> $GITHUB_OUTPUT
+          echo "backup_timestamp=$BACKUP_TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "📋 Backup ID: $BACKUP_ID"
+          echo "⏰ Backup Timestamp: $BACKUP_TIMESTAMP"
+
+      - name: 🔍 Validate Backup Prerequisites
+        id: validation
+        run: |
+          echo "## 🔍 Pre-Backup Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          VALIDATION_PASSED=true
+          
+          # Check required secrets
+          echo "### Required Secrets Check" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -z "${{ env.DATABASE_URL }}" ]; then
+            echo "| DATABASE_URL | ❌ Missing |" >> $GITHUB_STEP_SUMMARY
+            VALIDATION_PASSED=false
+          else
+            echo "| DATABASE_URL | ✅ Present |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -z "${{ env.S3_BACKUP_BUCKET }}" ]; then
+            echo "| S3_BACKUP_BUCKET | ❌ Missing |" >> $GITHUB_STEP_SUMMARY
+            VALIDATION_PASSED=false
+          else
+            echo "| S3_BACKUP_BUCKET | ✅ Present |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -z "${{ env.AWS_ACCESS_KEY_ID }}" ]; then
+            echo "| AWS_ACCESS_KEY_ID | ❌ Missing |" >> $GITHUB_STEP_SUMMARY
+            VALIDATION_PASSED=false
+          else
+            echo "| AWS_ACCESS_KEY_ID | ✅ Present |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check disk space
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### System Resources Check" >> $GITHUB_STEP_SUMMARY
+          DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+          echo "| Resource | Value | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Disk Usage | ${DISK_USAGE}% | $( [ $DISK_USAGE -lt 80 ] && echo '✅ OK' || echo '⚠️ High' ) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Available Memory | $(free -h | awk 'NR==2{print $7}') | ✅ OK |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ $DISK_USAGE -gt 90 ]; then
+            echo "::warning::Disk usage is critically high: ${DISK_USAGE}%"
+            VALIDATION_PASSED=false
+          fi
+          
+          echo "passed=$VALIDATION_PASSED" >> $GITHUB_OUTPUT
+          
+          if [ "$VALIDATION_PASSED" = "true" ]; then
+            echo "✅ All pre-backup validations passed"
+          else
+            echo "❌ Pre-backup validation failed"
+            echo "::error::Pre-backup validation failed. Check the summary for details."
+          fi
+
+      - name: 📊 Backup Configuration Summary
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Backup Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup Type | ${{ github.event.inputs.backup_type || 'incremental' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup ID | ${{ steps.generate_id.outputs.backup_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retention Days | ${{ env.BACKUP_RETENTION_DAYS }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Encryption | ${{ github.event.inputs.encrypt_backup == 'true' && '✅ Enabled' || '❌ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Restore | ${{ github.event.inputs.test_restore == 'true' && '✅ Enabled' || '❌ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${{ steps.generate_id.outputs.backup_timestamp }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # Database Backup
+  # ============================================================================
+  
+  database-backup:
+    name: 🗄️ Database Backup
+    runs-on: ubuntu-latest
+    needs: pre-backup-validation
+    if: needs.pre-backup-validation.outputs.validation_passed == 'true' && (github.event.inputs.backup_type == 'full' || github.event.inputs.backup_type == 'database-only' || github.event.inputs.backup_type == 'incremental' || github.event_name == 'schedule')
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup PostgreSQL Client
+        run: |
+          # Install PostgreSQL client
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-14
+
+      - name: 🗄️ Create Database Backup
+        id: db_backup
+        run: |
+          echo "🗄️ Creating database backup..."
+          
+          # Create backup directory
+          mkdir -p backups/database
+          
+          BACKUP_FILE="backups/database/db-backup-${{ needs.pre-backup-validation.outputs.backup_id }}.sql"
+          
+          # Extract database connection details
+          if [[ "${{ env.DATABASE_URL }}" =~ postgres://([^:]+):([^@]+)@([^:]+):([0-9]+)/(.+) ]]; then
+            DB_USER="${BASH_REMATCH[1]}"
+            DB_PASS="${BASH_REMATCH[2]}"
+            DB_HOST="${BASH_REMATCH[3]}"
+            DB_PORT="${BASH_REMATCH[4]}"
+            DB_NAME="${BASH_REMATCH[5]}"
+          else
+            echo "::error::Invalid DATABASE_URL format"
+            exit 1
+          fi
+          
+          # Create database dump
+          PGPASSWORD="$DB_PASS" pg_dump \
+            -h "$DB_HOST" \
+            -p "$DB_PORT" \
+            -U "$DB_USER" \
+            -d "$DB_NAME" \
+            --verbose \
+            --no-password \
+            --format=custom \
+            --compress=9 \
+            --file="$BACKUP_FILE.custom"
+          
+          # Also create SQL dump for easier inspection
+          PGPASSWORD="$DB_PASS" pg_dump \
+            -h "$DB_HOST" \
+            -p "$DB_PORT" \
+            -U "$DB_USER" \
+            -d "$DB_NAME" \
+            --verbose \
+            --no-password \
+            --format=plain \
+            --file="$BACKUP_FILE"
+          
+          # Get backup file sizes
+          CUSTOM_SIZE=$(du -h "$BACKUP_FILE.custom" | cut -f1)
+          SQL_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+          
+          echo "backup_file=$BACKUP_FILE" >> $GITHUB_OUTPUT
+          echo "custom_backup_file=$BACKUP_FILE.custom" >> $GITHUB_OUTPUT
+          echo "custom_size=$CUSTOM_SIZE" >> $GITHUB_OUTPUT
+          echo "sql_size=$SQL_SIZE" >> $GITHUB_OUTPUT
+          
+          echo "✅ Database backup created successfully"
+          echo "📊 Custom format: $CUSTOM_SIZE"
+          echo "📊 SQL format: $SQL_SIZE"
+
+      - name: 🔐 Encrypt Database Backup
+        if: github.event.inputs.encrypt_backup == 'true'
+        run: |
+          if [ -n "${{ env.BACKUP_ENCRYPTION_KEY }}" ]; then
+            echo "🔐 Encrypting database backups..."
+            
+            # Encrypt custom backup
+            openssl enc -aes-256-cbc -salt \
+              -in "${{ steps.db_backup.outputs.custom_backup_file }}" \
+              -out "${{ steps.db_backup.outputs.custom_backup_file }}.enc" \
+              -pass pass:"${{ env.BACKUP_ENCRYPTION_KEY }}"
+            
+            # Encrypt SQL backup
+            openssl enc -aes-256-cbc -salt \
+              -in "${{ steps.db_backup.outputs.backup_file }}" \
+              -out "${{ steps.db_backup.outputs.backup_file }}.enc" \
+              -pass pass:"${{ env.BACKUP_ENCRYPTION_KEY }}"
+            
+            # Remove unencrypted files
+            rm "${{ steps.db_backup.outputs.custom_backup_file }}"
+            rm "${{ steps.db_backup.outputs.backup_file }}"
+            
+            echo "✅ Database backups encrypted successfully"
+          else
+            echo "⚠️ Encryption requested but BACKUP_ENCRYPTION_KEY not provided"
+          fi
+
+      - name: 📊 Database Backup Summary
+        run: |
+          echo "## 🗄️ Database Backup Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup ID | ${{ needs.pre-backup-validation.outputs.backup_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Custom Format Size | ${{ steps.db_backup.outputs.custom_size }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SQL Format Size | ${{ steps.db_backup.outputs.sql_size }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Encryption | ${{ github.event.inputs.encrypt_backup == 'true' && '✅ Enabled' || '❌ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${{ needs.pre-backup-validation.outputs.backup_timestamp }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📋 Upload Database Backup Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-backup-${{ needs.pre-backup-validation.outputs.backup_id }}
+          path: backups/database/
+          retention-days: ${{ env.BACKUP_RETENTION_DAYS }}
+
+  # ============================================================================
+  # Application Files Backup
+  # ============================================================================
+  
+  files-backup:
+    name: 📁 Application Files Backup
+    runs-on: ubuntu-latest
+    needs: pre-backup-validation
+    if: needs.pre-backup-validation.outputs.validation_passed == 'true' && (github.event.inputs.backup_type == 'full' || github.event.inputs.backup_type == 'files-only' || github.event_name == 'schedule')
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📁 Create Application Files Backup
+        id: files_backup
+        run: |
+          echo "📁 Creating application files backup..."
+          
+          # Create backup directory
+          mkdir -p backups/files
+          
+          BACKUP_FILE="backups/files/app-files-${{ needs.pre-backup-validation.outputs.backup_id }}.tar.gz"
+          
+          # Create comprehensive backup excluding unnecessary files
+          tar -czf "$BACKUP_FILE" \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='dist' \
+            --exclude='build' \
+            --exclude='coverage' \
+            --exclude='*.log' \
+            --exclude='.env*' \
+            --exclude='backups' \
+            .
+          
+          # Get backup file size
+          BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+          
+          echo "backup_file=$BACKUP_FILE" >> $GITHUB_OUTPUT
+          echo "backup_size=$BACKUP_SIZE" >> $GITHUB_OUTPUT
+          
+          echo "✅ Application files backup created successfully"
+          echo "📊 Backup size: $BACKUP_SIZE"
+
+      - name: 🔐 Encrypt Files Backup
+        if: github.event.inputs.encrypt_backup == 'true'
+        run: |
+          if [ -n "${{ env.BACKUP_ENCRYPTION_KEY }}" ]; then
+            echo "🔐 Encrypting files backup..."
+            
+            openssl enc -aes-256-cbc -salt \
+              -in "${{ steps.files_backup.outputs.backup_file }}" \
+              -out "${{ steps.files_backup.outputs.backup_file }}.enc" \
+              -pass pass:"${{ env.BACKUP_ENCRYPTION_KEY }}"
+            
+            # Remove unencrypted file
+            rm "${{ steps.files_backup.outputs.backup_file }}"
+            
+            echo "✅ Files backup encrypted successfully"
+          else
+            echo "⚠️ Encryption requested but BACKUP_ENCRYPTION_KEY not provided"
+          fi
+
+      - name: 📊 Files Backup Summary
+        run: |
+          echo "## 📁 Application Files Backup Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup ID | ${{ needs.pre-backup-validation.outputs.backup_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup Size | ${{ steps.files_backup.outputs.backup_size }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Encryption | ${{ github.event.inputs.encrypt_backup == 'true' && '✅ Enabled' || '❌ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${{ needs.pre-backup-validation.outputs.backup_timestamp }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📋 Upload Files Backup Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: files-backup-${{ needs.pre-backup-validation.outputs.backup_id }}
+          path: backups/files/
+          retention-days: ${{ env.BACKUP_RETENTION_DAYS }}
+
+  # ============================================================================
+  # Configuration Backup
+  # ============================================================================
+  
+  configuration-backup:
+    name: ⚙️ Configuration Backup
+    runs-on: ubuntu-latest
+    needs: pre-backup-validation
+    if: needs.pre-backup-validation.outputs.validation_passed == 'true' && (github.event.inputs.backup_type == 'full' || github.event.inputs.backup_type == 'configuration-only' || github.event_name == 'schedule')
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Create Configuration Backup
+        id: config_backup
+        run: |
+          echo "⚙️ Creating configuration backup..."
+          
+          # Create backup directory
+          mkdir -p backups/configuration
+          
+          BACKUP_FILE="backups/configuration/config-${{ needs.pre-backup-validation.outputs.backup_id }}.tar.gz"
+          
+          # Create configuration backup
+          tar -czf "$BACKUP_FILE" \
+            --files-from=<(find . -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.toml" -o -name "*.ini" -o -name "Dockerfile*" -o -name "docker-compose*" -o -name "*.config.*" | grep -v node_modules | grep -v .git)
+          
+          # Get backup file size
+          BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+          
+          echo "backup_file=$BACKUP_FILE" >> $GITHUB_OUTPUT
+          echo "backup_size=$BACKUP_SIZE" >> $GITHUB_OUTPUT
+          
+          echo "✅ Configuration backup created successfully"
+          echo "📊 Backup size: $BACKUP_SIZE"
+
+      - name: 📊 Configuration Inventory
+        run: |
+          echo "## ⚙️ Configuration Backup Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup ID | ${{ needs.pre-backup-validation.outputs.backup_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup Size | ${{ steps.config_backup.outputs.backup_size }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${{ needs.pre-backup-validation.outputs.backup_timestamp }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration Files Included" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+          tar -tzf "${{ steps.config_backup.outputs.backup_file }}" | head -20 >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📋 Upload Configuration Backup Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: configuration-backup-${{ needs.pre-backup-validation.outputs.backup_id }}
+          path: backups/configuration/
+          retention-days: ${{ env.BACKUP_RETENTION_DAYS }}
+
+  # ============================================================================
+  # Cloud Storage Upload
+  # ============================================================================
+  
+  cloud-upload:
+    name: ☁️ Cloud Storage Upload
+    runs-on: ubuntu-latest
+    needs: [pre-backup-validation, database-backup, files-backup, configuration-backup]
+    if: always() && needs.pre-backup-validation.outputs.validation_passed == 'true' && (needs.database-backup.result == 'success' || needs.files-backup.result == 'success' || needs.configuration-backup.result == 'success')
+    
+    steps:
+      - name: 📥 Download All Backup Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-backups/
+
+      - name: 🔧 Configure AWS CLI
+        if: env.AWS_ACCESS_KEY_ID != '' && env.S3_BACKUP_BUCKET != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ☁️ Upload to S3
+        if: env.AWS_ACCESS_KEY_ID != '' && env.S3_BACKUP_BUCKET != ''
+        run: |
+          echo "☁️ Uploading backups to S3..."
+          
+          # Upload all backup artifacts to S3
+          aws s3 sync all-backups/ s3://${{ env.S3_BACKUP_BUCKET }}/bailbondpro-backups/${{ needs.pre-backup-validation.outputs.backup_id }}/ \
+            --storage-class STANDARD_IA \
+            --metadata "backup-id=${{ needs.pre-backup-validation.outputs.backup_id }},timestamp=${{ needs.pre-backup-validation.outputs.backup_timestamp }},type=${{ github.event.inputs.backup_type || 'incremental' }}"
+          
+          echo "✅ Backups uploaded to S3 successfully"
+          
+          # List uploaded files
+          echo "## ☁️ Cloud Storage Upload Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 Bucket**: ${{ env.S3_BACKUP_BUCKET }}" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 Path**: bailbondpro-backups/${{ needs.pre-backup-validation.outputs.backup_id }}/" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Uploaded Files" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+          aws s3 ls s3://${{ env.S3_BACKUP_BUCKET }}/bailbondpro-backups/${{ needs.pre-backup-validation.outputs.backup_id }}/ --recursive >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🧹 Cleanup Old Backups
+        if: env.AWS_ACCESS_KEY_ID != '' && env.S3_BACKUP_BUCKET != ''
+        run: |
+          echo "🧹 Cleaning up old backups..."
+          
+          # Calculate cutoff date
+          CUTOFF_DATE=$(date -d "${{ env.BACKUP_RETENTION_DAYS }} days ago" +%Y-%m-%d)
+          
+          # List and delete old backups
+          aws s3api list-objects-v2 \
+            --bucket ${{ env.S3_BACKUP_BUCKET }} \
+            --prefix "bailbondpro-backups/" \
+            --query "Contents[?LastModified<'$CUTOFF_DATE'].Key" \
+            --output text | \
+          while read -r key; do
+            if [ -n "$key" ]; then
+              echo "Deleting old backup: $key"
+              aws s3 rm "s3://${{ env.S3_BACKUP_BUCKET }}/$key"
+            fi
+          done
+          
+          echo "✅ Old backups cleaned up successfully"
+
+  # ============================================================================
+  # Backup Testing & Validation
+  # ============================================================================
+  
+  backup-testing:
+    name: 🧪 Backup Testing & Validation
+    runs-on: ubuntu-latest
+    needs: [pre-backup-validation, database-backup, cloud-upload]
+    if: github.event.inputs.test_restore == 'true' && needs.database-backup.result == 'success'
+    
+    steps:
+      - name: 📥 Download Database Backup
+        uses: actions/download-artifact@v4
+        with:
+          name: database-backup-${{ needs.pre-backup-validation.outputs.backup_id }}
+          path: test-restore/
+
+      - name: 🔧 Setup Test Database
+        run: |
+          # Start PostgreSQL for testing
+          sudo systemctl start postgresql
+          sudo -u postgres createdb test_restore_db
+          sudo -u postgres psql -c "CREATE USER test_user WITH PASSWORD 'test_password';"
+          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE test_restore_db TO test_user;"
+
+      - name: 🧪 Test Database Restore
+        run: |
+          echo "🧪 Testing database restore..."
+          
+          # Find the backup file
+          BACKUP_FILE=$(find test-restore/ -name "*.sql" -o -name "*.custom" | head -1)
+          
+          if [ -z "$BACKUP_FILE" ]; then
+            echo "::error::No backup file found for testing"
+            exit 1
+          fi
+          
+          echo "Testing restore from: $BACKUP_FILE"
+          
+          # Test restore based on file type
+          if [[ "$BACKUP_FILE" == *.custom ]]; then
+            # Custom format restore
+            PGPASSWORD=test_password pg_restore \
+              -h localhost \
+              -U test_user \
+              -d test_restore_db \
+              --verbose \
+              --no-owner \
+              --no-privileges \
+              "$BACKUP_FILE"
+          else
+            # SQL format restore
+            PGPASSWORD=test_password psql \
+              -h localhost \
+              -U test_user \
+              -d test_restore_db \
+              -f "$BACKUP_FILE"
+          fi
+          
+          # Verify restore by checking table count
+          TABLE_COUNT=$(PGPASSWORD=test_password psql -h localhost -U test_user -d test_restore_db -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" | xargs)
+          
+          echo "## 🧪 Backup Testing Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Database Restore | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tables Restored | $TABLE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup File | $(basename "$BACKUP_FILE") |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$TABLE_COUNT" -gt 0 ]; then
+            echo "✅ Backup restore test passed successfully"
+          else
+            echo "::warning::Backup restore test completed but no tables found"
+          fi
+
+  # ============================================================================
+  # Backup Summary & Notifications
+  # ============================================================================
+  
+  backup-summary:
+    name: 📊 Backup Summary & Notifications
+    runs-on: ubuntu-latest
+    needs: [pre-backup-validation, database-backup, files-backup, configuration-backup, cloud-upload, backup-testing]
+    if: always() && needs.pre-backup-validation.outputs.validation_passed == 'true'
+    
+    steps:
+      - name: 📊 Collect Backup Results
+        run: |
+          echo "DATABASE_STATUS=${{ needs.database-backup.result }}" >> $GITHUB_ENV
+          echo "FILES_STATUS=${{ needs.files-backup.result }}" >> $GITHUB_ENV
+          echo "CONFIG_STATUS=${{ needs.configuration-backup.result }}" >> $GITHUB_ENV
+          echo "CLOUD_STATUS=${{ needs.cloud-upload.result }}" >> $GITHUB_ENV
+          echo "TESTING_STATUS=${{ needs.backup-testing.result }}" >> $GITHUB_ENV
+
+      - name: 📊 Generate Backup Report
+        run: |
+          echo "## 📊 Backup Operation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Backup ID**: ${{ needs.pre-backup-validation.outputs.backup_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Backup Type**: ${{ github.event.inputs.backup_type || 'incremental' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp**: ${{ needs.pre-backup-validation.outputs.backup_timestamp }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Retention**: ${{ env.BACKUP_RETENTION_DAYS }} days" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Backup Components Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Notes |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Database | ${{ env.DATABASE_STATUS == 'success' && '✅ Success' || env.DATABASE_STATUS == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | PostgreSQL dump |" >> $GITHUB_STEP_SUMMARY
+          echo "| Application Files | ${{ env.FILES_STATUS == 'success' && '✅ Success' || env.FILES_STATUS == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | Source code & assets |" >> $GITHUB_STEP_SUMMARY
+          echo "| Configuration | ${{ env.CONFIG_STATUS == 'success' && '✅ Success' || env.CONFIG_STATUS == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | Config files |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cloud Upload | ${{ env.CLOUD_STATUS == 'success' && '✅ Success' || env.CLOUD_STATUS == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | S3 storage |" >> $GITHUB_STEP_SUMMARY
+          echo "| Restore Testing | ${{ env.TESTING_STATUS == 'success' && '✅ Success' || env.TESTING_STATUS == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | Validation |" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🚨 Create Issue on Critical Failure
+        if: needs.database-backup.result == 'failure' || (needs.cloud-upload.result == 'failure' && env.S3_BACKUP_BUCKET != '')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Critical Backup Failure - ${{ needs.pre-backup-validation.outputs.backup_id }}`;
+            const body = `
+            ## Critical Backup Failure Report
+            
+            **Backup ID**: ${{ needs.pre-backup-validation.outputs.backup_id }}
+            **Timestamp**: ${{ needs.pre-backup-validation.outputs.backup_timestamp }}
+            **Backup Type**: ${{ github.event.inputs.backup_type || 'incremental' }}
+            
+            ### Failed Components
+            - Database Backup: ${{ needs.database-backup.result }}
+            - Files Backup: ${{ needs.files-backup.result }}
+            - Configuration Backup: ${{ needs.configuration-backup.result }}
+            - Cloud Upload: ${{ needs.cloud-upload.result }}
+            - Restore Testing: ${{ needs.backup-testing.result }}
+            
+            ### Immediate Actions Required
+            1. Investigate backup failure logs
+            2. Verify database connectivity and permissions
+            3. Check cloud storage credentials and permissions
+            4. Ensure sufficient disk space and resources
+            5. Test manual backup procedures
+            6. Review backup retention policies
+            
+            ### Business Impact
+            - **High**: Data loss risk if primary systems fail
+            - **Medium**: Compliance and audit concerns
+            - **Low**: Operational continuity at risk
+            
+            **Auto-generated by GitHub Actions Backup System**
+            `;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['backup', 'critical', 'infrastructure', 'auto-generated']
+            });
+
+      - name: 📢 Slack Notification
+        if: env.ALERT_WEBHOOK != ''
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "${{ contains(needs.*.result, 'failure') && '🚨 BACKUP FAILED' || '✅ BACKUP COMPLETED' }} - ${{ needs.pre-backup-validation.outputs.backup_id }}",
+              "attachments": [
+                {
+                  "color": "${{ contains(needs.*.result, 'failure') && 'danger' || 'good' }}",
+                  "fields": [
+                    {
+                      "title": "Backup ID",
+                      "value": "${{ needs.pre-backup-validation.outputs.backup_id }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Backup Type",
+                      "value": "${{ github.event.inputs.backup_type || 'incremental' }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Database",
+                      "value": "${{ env.DATABASE_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Files",
+                      "value": "${{ env.FILES_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Configuration",
+                      "value": "${{ env.CONFIG_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Cloud Upload",
+                      "value": "${{ env.CLOUD_STATUS }}",
+                      "short": true
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.MONITORING_WEBHOOK_URL }}

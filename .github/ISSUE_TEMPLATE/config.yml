@@ -1,0 +1,21 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://docs.bailbondpro.com
+    about: Check our comprehensive documentation for guides and API references
+  
+  - name: 💬 Community Discussions
+    url: https://github.com/bailbondpro/bailbondpro/discussions
+    about: Ask questions, share ideas, and discuss with the community
+  
+  - name: 🔒 Security Issues
+    url: https://github.com/bailbondpro/bailbondpro/security/advisories/new
+    about: Report security vulnerabilities privately
+  
+  - name: 📧 Support
+    url: mailto:support@bailbondpro.com
+    about: Contact our support team for urgent issues or enterprise support
+  
+  - name: 🚀 Feature Roadmap
+    url: https://github.com/bailbondpro/bailbondpro/projects
+    about: View our public roadmap and planned features

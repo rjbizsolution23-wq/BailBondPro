@@ -1,0 +1,222 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement for BailBondPro
+title: "[FEATURE] "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible to help us understand your request.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      description: Please confirm the following before submitting
+      options:
+        - label: I have searched existing issues to ensure this feature hasn't been requested
+          required: true
+        - label: I have checked the roadmap to see if this feature is already planned
+          required: true
+        - label: This feature aligns with BailBondPro's core functionality
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: A brief, clear summary of the feature you're requesting
+      placeholder: Summarize the feature in 1-2 sentences...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: |
+        Describe the problem or pain point this feature would address:
+        - What current limitation or challenge does this solve?
+        - Who is affected by this problem?
+        - How frequently does this problem occur?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your proposed solution in detail
+      placeholder: |
+        Describe how you envision this feature working:
+        - What would the user interface look like?
+        - How would users interact with this feature?
+        - What would be the expected behavior?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: Which area of the application does this feature relate to?
+      options:
+        - Authentication & Security
+        - Client Management
+        - Bond Processing
+        - Payment Processing
+        - Reporting & Analytics
+        - Dashboard & UI
+        - API & Integrations
+        - Mobile Experience
+        - Admin Tools
+        - Compliance & Legal
+        - Performance & Optimization
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority Level
+      description: How important is this feature to you?
+      options:
+        - Critical (Blocking business operations)
+        - High (Significantly improves workflow)
+        - Medium (Nice to have improvement)
+        - Low (Minor enhancement)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: user-type
+    attributes:
+      label: Target User Type
+      description: Who would primarily benefit from this feature?
+      options:
+        - Bail Bond Agents
+        - Office Administrators
+        - Managers/Supervisors
+        - Clients/Defendants
+        - System Administrators
+        - All Users
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases
+      description: Provide specific use cases or scenarios where this feature would be valuable
+      placeholder: |
+        Example use cases:
+        1. When a user needs to...
+        2. During the process of...
+        3. To help with...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What criteria must be met for this feature to be considered complete?
+      placeholder: |
+        - [ ] User can...
+        - [ ] System should...
+        - [ ] Feature must...
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Have you considered any alternative approaches?
+      placeholder: Describe any alternative solutions you've considered...
+    validations:
+      required: false
+
+  - type: textarea
+    id: mockups
+    attributes:
+      label: Mockups/Wireframes
+      description: If you have any visual mockups or wireframes, please share them
+      placeholder: Drag and drop images here or paste image URLs...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: complexity
+    attributes:
+      label: Implementation Complexity (Your Assessment)
+      description: How complex do you think this feature might be to implement?
+      options:
+        - label: Simple (UI changes, configuration options)
+        - label: Moderate (New functionality, database changes)
+        - label: Complex (Major architectural changes, integrations)
+        - label: Unknown/Unsure
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Business Impact
+      description: What business benefits would this feature provide?
+      options:
+        - label: Increases efficiency/productivity
+        - label: Reduces manual work/errors
+        - label: Improves user experience
+        - label: Enables new business capabilities
+        - label: Ensures compliance/regulatory requirements
+        - label: Reduces operational costs
+        - label: Improves data accuracy/reporting
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Are there any dependencies or prerequisites for this feature?
+      placeholder: |
+        List any dependencies:
+        - Requires integration with...
+        - Depends on feature X being implemented first...
+        - Needs access to external service...
+    validations:
+      required: false
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Potential Risks/Concerns
+      description: Are there any potential risks or concerns with this feature?
+      placeholder: |
+        Consider potential risks:
+        - Security implications
+        - Performance impact
+        - User adoption challenges
+        - Technical complexity
+    validations:
+      required: false
+
+  - type: input
+    id: timeline
+    attributes:
+      label: Desired Timeline
+      description: When would you ideally like to see this feature implemented?
+      placeholder: e.g., Next release, Q1 2024, No specific timeline
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information that would be helpful
+      placeholder: Add any other context, research, or information about the feature request...
+    validations:
+      required: false

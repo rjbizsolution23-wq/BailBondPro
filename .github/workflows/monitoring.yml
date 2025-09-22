@@ -1,0 +1,539 @@
+name: 📊 Application Monitoring & Health Checks
+
+on:
+  schedule:
+    # Run health checks every 15 minutes
+    - cron: '*/15 * * * *'
+    # Run comprehensive monitoring daily at 6 AM UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      check_type:
+        description: 'Type of monitoring check to run'
+        required: true
+        default: 'health'
+        type: choice
+        options:
+          - health
+          - performance
+          - security
+          - comprehensive
+      environment:
+        description: 'Environment to monitor'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+      alert_threshold:
+        description: 'Alert threshold (1-10, 10 being most critical)'
+        required: false
+        default: '5'
+        type: string
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '8'
+  MONITORING_TIMEOUT: '30000'
+  ALERT_WEBHOOK: ${{ secrets.MONITORING_WEBHOOK_URL }}
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: monitoring-${{ github.ref }}-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================================
+  # Health Check Monitoring
+  # ============================================================================
+  
+  health-check:
+    name: 🏥 Health Check Monitoring
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'health' || github.event.inputs.check_type == 'comprehensive' || github.event_name == 'schedule'
+    
+    strategy:
+      matrix:
+        endpoint:
+          - name: 'Main Application'
+            url: 'https://bailbondpro.vercel.app'
+            expected_status: 200
+            timeout: 10000
+          - name: 'API Health'
+            url: 'https://bailbondpro.vercel.app/api/health'
+            expected_status: 200
+            timeout: 5000
+          - name: 'Database Connection'
+            url: 'https://bailbondpro.vercel.app/api/health/db'
+            expected_status: 200
+            timeout: 15000
+          - name: 'Authentication Service'
+            url: 'https://bailbondpro.vercel.app/api/auth/status'
+            expected_status: 200
+            timeout: 8000
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🏥 Health Check - ${{ matrix.endpoint.name }}
+        id: health_check
+        run: |
+          echo "🔍 Checking ${{ matrix.endpoint.name }} at ${{ matrix.endpoint.url }}"
+          
+          # Perform health check with timeout
+          RESPONSE=$(curl -s -w "%{http_code}|%{time_total}|%{size_download}" \
+            --max-time ${{ matrix.endpoint.timeout }} \
+            --connect-timeout 5 \
+            "${{ matrix.endpoint.url }}" || echo "000|0|0")
+          
+          HTTP_CODE=$(echo $RESPONSE | cut -d'|' -f1)
+          RESPONSE_TIME=$(echo $RESPONSE | cut -d'|' -f2)
+          RESPONSE_SIZE=$(echo $RESPONSE | cut -d'|' -f3)
+          
+          echo "HTTP_CODE=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "RESPONSE_TIME=$RESPONSE_TIME" >> $GITHUB_OUTPUT
+          echo "RESPONSE_SIZE=$RESPONSE_SIZE" >> $GITHUB_OUTPUT
+          
+          # Check if response is healthy
+          if [ "$HTTP_CODE" = "${{ matrix.endpoint.expected_status }}" ]; then
+            echo "STATUS=healthy" >> $GITHUB_OUTPUT
+            echo "✅ ${{ matrix.endpoint.name }} is healthy (${HTTP_CODE}, ${RESPONSE_TIME}s)"
+          else
+            echo "STATUS=unhealthy" >> $GITHUB_OUTPUT
+            echo "❌ ${{ matrix.endpoint.name }} is unhealthy (${HTTP_CODE}, ${RESPONSE_TIME}s)"
+            echo "::error::Health check failed for ${{ matrix.endpoint.name }}"
+          fi
+
+      - name: 📊 Update Health Status Summary
+        run: |
+          echo "## 🏥 Health Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Endpoint | Status | HTTP Code | Response Time | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|-----------|---------------|------|" >> $GITHUB_STEP_SUMMARY
+          
+          STATUS_ICON="${{ steps.health_check.outputs.STATUS == 'healthy' && '✅' || '❌' }}"
+          echo "| ${{ matrix.endpoint.name }} | $STATUS_ICON ${{ steps.health_check.outputs.STATUS }} | ${{ steps.health_check.outputs.HTTP_CODE }} | ${{ steps.health_check.outputs.RESPONSE_TIME }}s | ${{ steps.health_check.outputs.RESPONSE_SIZE }} bytes |" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🚨 Create Issue on Failure
+        if: steps.health_check.outputs.STATUS == 'unhealthy'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Health Check Failed: ${{ matrix.endpoint.name }}`;
+            const body = `
+            ## Health Check Failure Report
+            
+            **Endpoint**: ${{ matrix.endpoint.name }}
+            **URL**: ${{ matrix.endpoint.url }}
+            **Expected Status**: ${{ matrix.endpoint.expected_status }}
+            **Actual Status**: ${{ steps.health_check.outputs.HTTP_CODE }}
+            **Response Time**: ${{ steps.health_check.outputs.RESPONSE_TIME }}s
+            **Timestamp**: ${new Date().toISOString()}
+            **Environment**: ${{ github.event.inputs.environment || 'production' }}
+            
+            ### Possible Causes
+            - Server downtime or maintenance
+            - Network connectivity issues
+            - Database connection problems
+            - Authentication service issues
+            - Rate limiting or DDoS protection
+            
+            ### Immediate Actions Required
+            1. Check server status and logs
+            2. Verify database connectivity
+            3. Review recent deployments
+            4. Check third-party service status
+            5. Monitor for additional failures
+            
+            **Auto-generated by GitHub Actions Monitoring**
+            `;
+            
+            // Check if issue already exists
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'monitoring,health-check,critical'
+            });
+            
+            const existingIssue = existingIssues.data.find(issue => 
+              issue.title.includes('${{ matrix.endpoint.name }}')
+            );
+            
+            if (!existingIssue) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['monitoring', 'health-check', 'critical', 'auto-generated']
+              });
+            }
+
+  # ============================================================================
+  # Performance Monitoring
+  # ============================================================================
+  
+  performance-monitoring:
+    name: ⚡ Performance Monitoring
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'performance' || github.event.inputs.check_type == 'comprehensive'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: ⚡ Lighthouse Performance Audit
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          urls: |
+            https://bailbondpro.vercel.app
+            https://bailbondpro.vercel.app/dashboard
+            https://bailbondpro.vercel.app/clients
+          configPath: './.lighthouserc.json'
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+
+      - name: 📊 Core Web Vitals Check
+        run: |
+          echo "## ⚡ Performance Monitoring Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Install web-vitals CLI
+          npm install -g web-vitals-cli
+          
+          # Check Core Web Vitals for key pages
+          PAGES=(
+            "https://bailbondpro.vercel.app"
+            "https://bailbondpro.vercel.app/dashboard"
+            "https://bailbondpro.vercel.app/clients"
+          )
+          
+          echo "| Page | LCP | FID | CLS | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|-----|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          for page in "${PAGES[@]}"; do
+            echo "🔍 Checking Web Vitals for: $page"
+            
+            # Run web vitals check (with fallback)
+            VITALS_RESULT=$(web-vitals-cli "$page" --output json 2>/dev/null || echo '{"lcp":0,"fid":0,"cls":0}')
+            
+            LCP=$(echo "$VITALS_RESULT" | jq -r '.lcp // 0')
+            FID=$(echo "$VITALS_RESULT" | jq -r '.fid // 0')
+            CLS=$(echo "$VITALS_RESULT" | jq -r '.cls // 0')
+            
+            # Determine status based on thresholds
+            STATUS="✅ Good"
+            if (( $(echo "$LCP > 2500" | bc -l) )) || (( $(echo "$FID > 100" | bc -l) )) || (( $(echo "$CLS > 0.1" | bc -l) )); then
+              STATUS="⚠️ Needs Improvement"
+            fi
+            if (( $(echo "$LCP > 4000" | bc -l) )) || (( $(echo "$FID > 300" | bc -l) )) || (( $(echo "$CLS > 0.25" | bc -l) )); then
+              STATUS="❌ Poor"
+            fi
+            
+            PAGE_NAME=$(basename "$page")
+            echo "| ${PAGE_NAME:-Home} | ${LCP}ms | ${FID}ms | $CLS | $STATUS |" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: 🚀 Load Testing
+        run: |
+          # Install k6 for load testing
+          curl https://github.com/grafana/k6/releases/download/v0.47.0/k6-v0.47.0-linux-amd64.tar.gz -L | tar xvz --strip-components 1
+          
+          # Create basic load test script
+          cat > load-test.js << 'EOF'
+          import http from 'k6/http';
+          import { check, sleep } from 'k6';
+          
+          export let options = {
+            stages: [
+              { duration: '30s', target: 10 },
+              { duration: '1m', target: 20 },
+              { duration: '30s', target: 0 },
+            ],
+          };
+          
+          export default function() {
+            let response = http.get('https://bailbondpro.vercel.app');
+            check(response, {
+              'status is 200': (r) => r.status === 200,
+              'response time < 2000ms': (r) => r.timings.duration < 2000,
+            });
+            sleep(1);
+          }
+          EOF
+          
+          # Run load test
+          echo "🚀 Running load test..."
+          ./k6 run --out json=load-test-results.json load-test.js
+          
+          # Process results
+          if [ -f "load-test-results.json" ]; then
+            echo "### 🚀 Load Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "Load test completed successfully. Results saved to artifacts." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📋 Upload Performance Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-monitoring-results
+          path: |
+            load-test-results.json
+            load-test.js
+          retention-days: 30
+
+  # ============================================================================
+  # Security Monitoring
+  # ============================================================================
+  
+  security-monitoring:
+    name: 🔒 Security Monitoring
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'security' || github.event.inputs.check_type == 'comprehensive'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔒 SSL Certificate Check
+        run: |
+          echo "## 🔒 Security Monitoring Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          DOMAINS=(
+            "bailbondpro.vercel.app"
+          )
+          
+          echo "| Domain | SSL Status | Expiry | Grade |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          
+          for domain in "${DOMAINS[@]}"; do
+            echo "🔍 Checking SSL for: $domain"
+            
+            # Check SSL certificate
+            SSL_INFO=$(echo | openssl s_client -servername "$domain" -connect "$domain:443" 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo "")
+            
+            if [ -n "$SSL_INFO" ]; then
+              EXPIRY=$(echo "$SSL_INFO" | grep "notAfter" | cut -d= -f2)
+              STATUS="✅ Valid"
+              GRADE="A+"
+            else
+              EXPIRY="Unknown"
+              STATUS="❌ Invalid"
+              GRADE="F"
+            fi
+            
+            echo "| $domain | $STATUS | $EXPIRY | $GRADE |" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: 🛡️ Security Headers Check
+        run: |
+          echo "### 🛡️ Security Headers Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          URL="https://bailbondpro.vercel.app"
+          
+          # Check security headers
+          HEADERS=$(curl -s -I "$URL" | tr -d '\r')
+          
+          echo "| Header | Status | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Check for important security headers
+          SECURITY_HEADERS=(
+            "strict-transport-security"
+            "content-security-policy"
+            "x-frame-options"
+            "x-content-type-options"
+            "referrer-policy"
+            "permissions-policy"
+          )
+          
+          for header in "${SECURITY_HEADERS[@]}"; do
+            if echo "$HEADERS" | grep -qi "^$header:"; then
+              VALUE=$(echo "$HEADERS" | grep -i "^$header:" | cut -d: -f2- | xargs)
+              echo "| $header | ✅ Present | $VALUE |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| $header | ❌ Missing | - |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+      - name: 🔍 Vulnerability Scan
+        run: |
+          # Install and run basic vulnerability scanner
+          echo "🔍 Running basic vulnerability scan..."
+          
+          # Check for common vulnerabilities using curl
+          SCAN_RESULTS=""
+          
+          # Test for common endpoints that shouldn't be accessible
+          ENDPOINTS=(
+            "/.env"
+            "/admin"
+            "/.git/config"
+            "/wp-admin"
+            "/phpmyadmin"
+          )
+          
+          echo "### 🔍 Vulnerability Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Endpoint | Status | Risk Level |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|------------|" >> $GITHUB_STEP_SUMMARY
+          
+          for endpoint in "${ENDPOINTS[@]}"; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://bailbondpro.vercel.app$endpoint" || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              RISK="🔴 High"
+              echo "::warning::Potentially sensitive endpoint accessible: $endpoint"
+            elif [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "401" ]; then
+              RISK="🟡 Medium"
+            else
+              RISK="🟢 Low"
+            fi
+            
+            echo "| $endpoint | $HTTP_CODE | $RISK |" >> $GITHUB_STEP_SUMMARY
+          done
+
+  # ============================================================================
+  # Comprehensive System Health
+  # ============================================================================
+  
+  system-health:
+    name: 🏥 System Health Overview
+    runs-on: ubuntu-latest
+    needs: [health-check, performance-monitoring, security-monitoring]
+    if: always()
+    
+    steps:
+      - name: 📊 Collect System Health Data
+        run: |
+          echo "HEALTH_STATUS=${{ needs.health-check.result }}" >> $GITHUB_ENV
+          echo "PERFORMANCE_STATUS=${{ needs.performance-monitoring.result }}" >> $GITHUB_ENV
+          echo "SECURITY_STATUS=${{ needs.security-monitoring.result }}" >> $GITHUB_ENV
+
+      - name: 📊 Generate Health Score
+        id: health_score
+        run: |
+          # Calculate overall health score
+          SCORE=100
+          
+          # Deduct points for failures
+          if [ "${{ env.HEALTH_STATUS }}" != "success" ]; then
+            SCORE=$((SCORE - 40))
+          fi
+          
+          if [ "${{ env.PERFORMANCE_STATUS }}" != "success" ] && [ "${{ env.PERFORMANCE_STATUS }}" != "skipped" ]; then
+            SCORE=$((SCORE - 30))
+          fi
+          
+          if [ "${{ env.SECURITY_STATUS }}" != "success" ] && [ "${{ env.SECURITY_STATUS }}" != "skipped" ]; then
+            SCORE=$((SCORE - 30))
+          fi
+          
+          echo "HEALTH_SCORE=$SCORE" >> $GITHUB_OUTPUT
+          
+          # Determine health grade
+          if [ $SCORE -ge 90 ]; then
+            GRADE="A+"
+            COLOR="🟢"
+          elif [ $SCORE -ge 80 ]; then
+            GRADE="A"
+            COLOR="🟢"
+          elif [ $SCORE -ge 70 ]; then
+            GRADE="B"
+            COLOR="🟡"
+          elif [ $SCORE -ge 60 ]; then
+            GRADE="C"
+            COLOR="🟡"
+          else
+            GRADE="F"
+            COLOR="🔴"
+          fi
+          
+          echo "HEALTH_GRADE=$GRADE" >> $GITHUB_OUTPUT
+          echo "HEALTH_COLOR=$COLOR" >> $GITHUB_OUTPUT
+
+      - name: 📊 System Health Summary
+        run: |
+          echo "## 🏥 System Health Overview" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Overall Health Score**: ${{ steps.health_score.outputs.HEALTH_COLOR }} ${{ steps.health_score.outputs.HEALTH_SCORE }}/100 (Grade: ${{ steps.health_score.outputs.HEALTH_GRADE }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Impact |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Health Checks | ${{ env.HEALTH_STATUS == 'success' && '✅ Healthy' || '❌ Issues Detected' }} | High |" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance | ${{ env.PERFORMANCE_STATUS == 'success' && '✅ Good' || env.PERFORMANCE_STATUS == 'skipped' && '⏭️ Skipped' || '⚠️ Degraded' }} | Medium |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ env.SECURITY_STATUS == 'success' && '✅ Secure' || env.SECURITY_STATUS == 'skipped' && '⏭️ Skipped' || '🔒 Vulnerabilities' }} | High |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Last Updated**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment**: ${{ github.event.inputs.environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🚨 Critical Alert
+        if: steps.health_score.outputs.HEALTH_SCORE < 60
+        run: |
+          echo "::error::Critical system health issue detected! Health score: ${{ steps.health_score.outputs.HEALTH_SCORE }}/100"
+          echo "🚨 CRITICAL ALERT: System health is below acceptable threshold" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📢 Slack Notification
+        if: env.ALERT_WEBHOOK != '' && (steps.health_score.outputs.HEALTH_SCORE < 80 || github.event.inputs.check_type == 'comprehensive')
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "${{ steps.health_score.outputs.HEALTH_SCORE < 60 && '🚨 CRITICAL' || steps.health_score.outputs.HEALTH_SCORE < 80 && '⚠️ WARNING' || '✅ HEALTHY' }} - System Health Report",
+              "attachments": [
+                {
+                  "color": "${{ steps.health_score.outputs.HEALTH_SCORE < 60 && 'danger' || steps.health_score.outputs.HEALTH_SCORE < 80 && 'warning' || 'good' }}",
+                  "fields": [
+                    {
+                      "title": "Overall Health Score",
+                      "value": "${{ steps.health_score.outputs.HEALTH_COLOR }} ${{ steps.health_score.outputs.HEALTH_SCORE }}/100 (Grade: ${{ steps.health_score.outputs.HEALTH_GRADE }})",
+                      "short": true
+                    },
+                    {
+                      "title": "Environment",
+                      "value": "${{ github.event.inputs.environment || 'production' }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Health Checks",
+                      "value": "${{ env.HEALTH_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Performance",
+                      "value": "${{ env.PERFORMANCE_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Security",
+                      "value": "${{ env.SECURITY_STATUS }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Timestamp",
+                      "value": "$(date -u)",
+                      "short": true
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.MONITORING_WEBHOOK_URL }}

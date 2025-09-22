@@ -1,0 +1,103 @@
+# ============================================================================
+# Docker Compose Override for Development Environment
+# Provides hot reload, debugging, and development-specific configurations
+# ============================================================================
+
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Development Application Service
+  # ============================================================================
+  app:
+    build:
+      target: development
+    environment:
+      - NODE_ENV=development
+      - DEBUG=bailbondpro:*
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      # Mount source code for hot reload
+      - .:/app
+      - /app/node_modules
+      - /app/dist
+    ports:
+      # Additional ports for development
+      - "3000:3000"  # Main app
+      - "5173:5173"  # Vite dev server
+      - "9229:9229"  # Node.js debugger
+    command: npm run dev
+    stdin_open: true
+    tty: true
+
+  # ============================================================================
+  # Development Database with Exposed Ports
+  # ============================================================================
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=bailbondpro_dev
+    volumes:
+      # Add development seed data
+      - ./database/seeds:/docker-entrypoint-initdb.d/seeds
+
+  # ============================================================================
+  # Development Redis with Exposed Ports
+  # ============================================================================
+  redis:
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    # Remove password for development
+
+  # ============================================================================
+  # Development Tools
+  # ============================================================================
+  
+  # Mailhog for email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: bailbondpro-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - bailbondpro-network
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: bailbondpro-pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@bailbondpro.local
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - bailbondpro-network
+
+  # Redis Commander for Redis management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: bailbondpro-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - bailbondpro-network
+
+# ============================================================================
+# Development Volumes
+# ============================================================================
+volumes:
+  pgadmin-data:
+    driver: local

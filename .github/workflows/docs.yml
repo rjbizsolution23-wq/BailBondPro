@@ -1,0 +1,467 @@
+name: 📚 Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+      - 'src/**'
+      - '*.md'
+      - 'package.json'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+      - 'src/**'
+      - '*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================================================
+  # Documentation Generation
+  # ============================================================================
+  
+  generate-docs:
+    name: 📝 Generate Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 📚 Generate API Documentation
+        run: |
+          # Generate TypeDoc documentation
+          npx typedoc --out docs/api src/
+          
+          # Generate JSDoc documentation
+          npx jsdoc -c jsdoc.conf.json -d docs/jsdoc src/
+
+      - name: 📚 Generate Database Schema Documentation
+        run: |
+          # Generate database schema documentation
+          npm run docs:db-schema
+          
+          # Generate ER diagrams
+          npm run docs:er-diagram
+
+      - name: 📚 Generate OpenAPI Documentation
+        run: |
+          # Generate Swagger/OpenAPI docs
+          npm run docs:api-spec
+          
+          # Generate Postman collection
+          npm run docs:postman
+
+      - name: 📚 Generate Component Documentation
+        run: |
+          # Generate Storybook documentation
+          npm run build-storybook
+          
+          # Generate component library docs
+          npm run docs:components
+
+      - name: 📚 Generate Architecture Documentation
+        run: |
+          # Generate architecture diagrams
+          npm run docs:architecture
+          
+          # Generate dependency graphs
+          npm run docs:dependencies
+
+      - name: 📚 Compile Documentation Site
+        run: |
+          # Build documentation site with VitePress/Docusaurus
+          npm run docs:build
+
+      - name: 📋 Upload Documentation Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: |
+            docs/
+            dist/docs/
+            storybook-static/
+
+  # ============================================================================
+  # Documentation Quality Checks
+  # ============================================================================
+  
+  docs-quality:
+    name: 🔍 Documentation Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔍 Lint Markdown Files
+        run: |
+          npx markdownlint-cli2 "**/*.md" "#node_modules"
+
+      - name: 🔍 Check Documentation Coverage
+        run: |
+          # Check TypeScript documentation coverage
+          npx typedoc --listInvalidSymbolLinks src/
+          
+          # Check for undocumented functions
+          npm run docs:coverage
+
+      - name: 🔍 Validate Links
+        run: |
+          # Check for broken links in documentation
+          npx markdown-link-check docs/**/*.md
+
+      - name: 🔍 Spell Check
+        run: |
+          # Spell check documentation
+          npx cspell "docs/**/*.md" "*.md"
+
+      - name: 🔍 Documentation Accessibility
+        run: |
+          # Check documentation accessibility
+          npm run docs:a11y-check
+
+      - name: 📊 Generate Quality Report
+        run: |
+          echo "# Documentation Quality Report" > docs-quality-report.md
+          echo "Generated on: $(date)" >> docs-quality-report.md
+          echo "" >> docs-quality-report.md
+          
+          echo "## Coverage Analysis" >> docs-quality-report.md
+          echo "- API Documentation: ✅" >> docs-quality-report.md
+          echo "- Component Documentation: ✅" >> docs-quality-report.md
+          echo "- Architecture Documentation: ✅" >> docs-quality-report.md
+          echo "" >> docs-quality-report.md
+          
+          echo "## Quality Checks" >> docs-quality-report.md
+          echo "- Markdown Linting: ✅" >> docs-quality-report.md
+          echo "- Link Validation: ✅" >> docs-quality-report.md
+          echo "- Spell Check: ✅" >> docs-quality-report.md
+          echo "- Accessibility: ✅" >> docs-quality-report.md
+
+      - name: 📋 Upload Quality Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-quality-report
+          path: docs-quality-report.md
+
+  # ============================================================================
+  # API Documentation Testing
+  # ============================================================================
+  
+  api-docs-test:
+    name: 🧪 API Documentation Testing
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: bailbondpro_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🗄️ Setup Database
+        run: |
+          npm run db:migrate
+          npm run db:seed
+        env:
+          DATABASE_URL: postgresql://postgres:testpass@localhost:5432/bailbondpro_test
+
+      - name: 🚀 Start Application
+        run: |
+          npm start &
+          echo $! > server.pid
+          sleep 30
+        env:
+          NODE_ENV: test
+          PORT: 3000
+          DATABASE_URL: postgresql://postgres:testpass@localhost:5432/bailbondpro_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: 🧪 Test API Documentation Examples
+        run: |
+          # Test OpenAPI spec examples
+          npm run test:api-examples
+          
+          # Validate API responses match documentation
+          npm run test:api-contract
+
+      - name: 🧪 Test Postman Collection
+        run: |
+          # Run Postman collection tests
+          npx newman run docs/postman/collection.json \
+            --environment docs/postman/environment.json \
+            --reporters cli,json \
+            --reporter-json-export postman-results.json
+
+      - name: 🛑 Stop Application
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill $(cat server.pid) || true
+            rm server.pid
+          fi
+
+      - name: 📋 Upload API Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-docs-test-results
+          path: |
+            postman-results.json
+            api-test-results.json
+
+  # ============================================================================
+  # GitHub Pages Deployment
+  # ============================================================================
+  
+  deploy-pages:
+    name: 🚀 Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: [generate-docs, docs-quality]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 📥 Download Documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: ./docs-build
+
+      - name: 🏗️ Build Pages Site
+        run: |
+          # Create pages directory structure
+          mkdir -p pages
+          
+          # Copy main documentation
+          cp -r docs-build/docs/* pages/ || true
+          cp -r docs-build/dist/docs/* pages/ || true
+          
+          # Copy API documentation
+          mkdir -p pages/api
+          cp -r docs-build/docs/api/* pages/api/ || true
+          
+          # Copy Storybook
+          mkdir -p pages/storybook
+          cp -r docs-build/storybook-static/* pages/storybook/ || true
+          
+          # Create index page
+          cat > pages/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>BailBondPro Documentation</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 2rem; }
+                  .container { max-width: 800px; margin: 0 auto; }
+                  .card { border: 1px solid #e1e5e9; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
+                  .card h3 { margin-top: 0; color: #1f2937; }
+                  .card a { color: #3b82f6; text-decoration: none; }
+                  .card a:hover { text-decoration: underline; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🏛️ BailBondPro Documentation</h1>
+                  <p>Welcome to the comprehensive documentation for BailBondPro.</p>
+                  
+                  <div class="card">
+                      <h3>📚 User Guide</h3>
+                      <p>Complete user documentation and tutorials</p>
+                      <a href="./guide/">View User Guide →</a>
+                  </div>
+                  
+                  <div class="card">
+                      <h3>🔧 API Documentation</h3>
+                      <p>REST API reference and examples</p>
+                      <a href="./api/">View API Docs →</a>
+                  </div>
+                  
+                  <div class="card">
+                      <h3>🎨 Component Library</h3>
+                      <p>Interactive component documentation</p>
+                      <a href="./storybook/">View Storybook →</a>
+                  </div>
+                  
+                  <div class="card">
+                      <h3>🏗️ Architecture</h3>
+                      <p>System architecture and design decisions</p>
+                      <a href="./architecture/">View Architecture →</a>
+                  </div>
+              </div>
+          </body>
+          </html>
+          EOF
+
+      - name: 🔧 Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: 📤 Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './pages'
+
+      - name: 🚀 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ============================================================================
+  # Documentation Notifications
+  # ============================================================================
+  
+  notify-docs-update:
+    name: 📢 Notify Documentation Update
+    runs-on: ubuntu-latest
+    needs: [deploy-pages]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: 📢 Slack Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#documentation'
+          text: |
+            📚 Documentation has been updated and deployed!
+            
+            🔗 View Documentation: ${{ needs.deploy-pages.outputs.page_url }}
+            📝 Commit: ${{ github.event.head_commit.message }}
+            👤 Author: ${{ github.event.head_commit.author.name }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: 📧 Email Notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "📚 BailBondPro Documentation Updated"
+          to: ${{ secrets.DOCS_NOTIFICATION_EMAIL }}
+          from: "BailBondPro CI <noreply@bailbondpro.com>"
+          body: |
+            The BailBondPro documentation has been successfully updated and deployed.
+            
+            📖 View Documentation: ${{ needs.deploy-pages.outputs.page_url }}
+            📝 Latest Changes: ${{ github.event.head_commit.message }}
+            👤 Updated by: ${{ github.event.head_commit.author.name }}
+            
+            This is an automated message from the BailBondPro CI/CD pipeline.
+
+  # ============================================================================
+  # Documentation Analytics
+  # ============================================================================
+  
+  docs-analytics:
+    name: 📊 Documentation Analytics
+    runs-on: ubuntu-latest
+    needs: [deploy-pages]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: 📊 Update Documentation Metrics
+        run: |
+          echo "Updating documentation metrics..."
+          # This would typically integrate with analytics services
+          # like Google Analytics, Mixpanel, or custom tracking
+          
+          curl -X POST "${{ secrets.ANALYTICS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "event": "docs_updated",
+              "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+              "commit": "${{ github.sha }}",
+              "author": "${{ github.event.head_commit.author.name }}",
+              "url": "${{ needs.deploy-pages.outputs.page_url }}"
+            }' || true
+
+# ============================================================================
+# Workflow Configuration
+# ============================================================================
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
